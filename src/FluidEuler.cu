@@ -5,32 +5,6 @@
 #include <cub/block/block_reduce.cuh>
 #include <thrust/execution_policy.h>
 
-void WriteVelocityFieldToFile(const fs::path& output_info_file,
-	const fs::path& output_grid_file,
-	int time_step_counter,
-	int current_frame,
-	double dt,
-	const std::shared_ptr<HAHostTileHolder<Tile>> holder) {
-	// Open the file for the info output
-	std::ofstream out(output_info_file.string());
-	if (!out) {
-		throw std::runtime_error("Failed to open file for writing: " + output_info_file.string());
-	}
-
-	// Write the time_step_counter, frame, and dt
-	fmt::print(out,
-		"time_step_counter: {}\n"
-		"frame: {}\n"
-		"dt: {}\n",
-		time_step_counter, current_frame, dt);
-
-	// Close the file
-	out.close();
-
-	// Write grid data using the helper function
-	IOFunc::WriteUChannelsToCompressedFile(holder, output_grid_file);
-}
-
 __device__ Vec NFMErodedAdvectionPoint(const int axis, const HATileAccessor<Tile>& acc, const HATileInfo<Tile>& info, const Coord& l_ijk) {
 	auto g_ijk = acc.localToGlobalCoord(info, l_ijk);
 	auto ng_ijk = g_ijk; ng_ijk[axis]--;

@@ -3,6 +3,11 @@
 #include "GMGSolver.h"
 #include "SDFGrid.h"
 
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 //TVORTEX: tornado-like vortex, reference: Physically-based Simulation of Tornadoes
 enum TestCase { TVORTEX = 0, FORCE_VORT, FREE_VORT, DUAL_VORT, LEAP_FROG, KARMAN, SMOKESPHERE, NASA, PROP, WP3D, F1CAR, LIZARD, FISH, BAT, FLAMINGO, BLUEANGEL };
 

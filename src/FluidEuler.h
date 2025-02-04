@@ -114,13 +114,6 @@ void CoarsenWithPointValue(FuncV point_func, HADeviceGrid<Tile>& grid, FluidPara
 
 }
 
-void WriteVelocityFieldToFile(const fs::path& output_info_file,
-	const fs::path& output_grid_file,
-	int time_step_counter,
-	int current_frame,
-	double dt,
-	const std::shared_ptr<HAHostTileHolder<Tile>> holder);
-
 __device__ Vec NFMErodedAdvectionPoint(const int axis, const HATileAccessor<Tile>& acc, const HATileInfo<Tile>& info, const Coord& l_ijk);
 
 //set all face velocities that has a neumann neighbor to 0
@@ -1101,31 +1094,6 @@ public:
 		cudaDeviceSynchronize(); advance_time = timer.stop();
 
 		//writeIterVelocityField(metadata);
-	}
-
-	void writeIterVelocityField(DriverMetaData& metadata) {
-		// Define the output path and create necessary directories
-		fs::path output_path = metadata.base_path / "iter_grids";
-		fs::create_directories(output_path);
-
-		// Generate the file names
-		fs::path output_info_file = output_path / fmt::format("{:04d}_{:04d}_info.txt", metadata.current_frame, time_step_counter);
-		fs::path output_grid_file = output_path / fmt::format("{:04d}_{:04d}.ltiles", metadata.current_frame, time_step_counter);
-		auto holder = grid_ptrs.back()->getHostTileHolderForLeafs();
-
-		// Create a thread to handle the file output
-		auto output_thread = std::make_shared<std::thread>(
-			WriteVelocityFieldToFile,
-			output_info_file,
-			output_grid_file,
-			time_step_counter,
-			metadata.current_frame,
-			metadata.dt,
-			holder
-		);
-
-		// Limit the number of concurrent threads
-		metadata.Append_Output_Thread(output_thread);
 	}
 
 	void WriteStatToFile(DriverMetaData& metadata) {

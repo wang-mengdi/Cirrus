@@ -22,7 +22,6 @@
 namespace IOFunc {
     //plain binary I/O
     void WriteHAHostTileHolderToFile(const HAHostTileHolder<Tile>& holder, const fs::path& filepath);
-    void WriteUChannelsToCompressedFile(const std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, const fs::path& filepath);
 
     HAHostTileHolder<Tile> ReadHAHostTileHolderFromFile(const fs::path& filepath);
     template <typename T> void WriteHostVectorToBinary(const thrust::host_vector<T>& vec, const fs::path& filepath) {

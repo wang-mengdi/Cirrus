@@ -20,7 +20,7 @@
 #include "vtkXMLHierarchicalBoxDataWriter.h"
 #include <vtkXMLImageDataWriter.h>
 
-#include <zlib.h>
+//#include <zlib.h>
 
 //#include <AMReX.H>
 //#include <AMReX_AmrCore.H>
@@ -137,65 +137,6 @@ namespace IOFunc {
         in.close();
 
         return holder;
-    }
-
-    void WriteUChannelsToCompressedFile(const std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, const fs::path& filepath) {
-        auto& holder = *holder_ptr;
-
-        // Open the file for writing in binary mode
-        std::ofstream out(filepath.string(), std::ios::binary);
-        if (!out) {
-            throw std::runtime_error("Failed to open file for writing: " + filepath.string());
-        }
-
-        // Create a buffer to store uncompressed data
-        std::vector<uint8_t> uncompressedData;
-
-        // Traverse each level in mHostLevels
-        for (const auto& level : holder.mHostLevels) {
-            for (const auto& tileInfo : level) {
-                // Extract level and coord information
-                int level = tileInfo.mLevel;
-                int coordX = tileInfo.mTileCoord[0];
-                int coordY = tileInfo.mTileCoord[1];
-                int coordZ = tileInfo.mTileCoord[2];
-
-                // Append level and coordinates to the uncompressed buffer
-                uncompressedData.insert(uncompressedData.end(), reinterpret_cast<const uint8_t*>(&level), reinterpret_cast<const uint8_t*>(&level) + sizeof(level));
-                uncompressedData.insert(uncompressedData.end(), reinterpret_cast<const uint8_t*>(&coordX), reinterpret_cast<const uint8_t*>(&coordX) + sizeof(coordX));
-                uncompressedData.insert(uncompressedData.end(), reinterpret_cast<const uint8_t*>(&coordY), reinterpret_cast<const uint8_t*>(&coordY) + sizeof(coordY));
-                uncompressedData.insert(uncompressedData.end(), reinterpret_cast<const uint8_t*>(&coordZ), reinterpret_cast<const uint8_t*>(&coordZ) + sizeof(coordZ));
-
-                // Find the corresponding tile using mTilePtr in tileInfo
-                if (tileInfo.mTilePtr == nullptr) {
-                    throw std::runtime_error("Tile pointer is null.");
-                }
-                const auto& tile = *tileInfo.mTilePtr;
-
-                // Write data from u_channel, u_channel + 1, and u_channel + 2
-                for (int channelOffset = 0; channelOffset < 3; ++channelOffset) {
-                    const auto& channelData = tile.mData[Tile::u_channel + channelOffset];
-                    uncompressedData.insert(uncompressedData.end(),
-                        reinterpret_cast<const uint8_t*>(channelData),
-                        reinterpret_cast<const uint8_t*>(channelData + Tile::SIZE));
-                }
-            }
-        }
-
-        // Compress the uncompressed data
-        uLongf compressedSize = compressBound(uncompressedData.size());
-        std::vector<uint8_t> compressedData(compressedSize);
-
-        int ret = compress(compressedData.data(), &compressedSize, uncompressedData.data(), uncompressedData.size());
-        if (ret != Z_OK) {
-            throw std::runtime_error("Compression failed with error code: " + std::to_string(ret));
-        }
-
-        // Write the compressed data to the file
-        out.write(reinterpret_cast<const char*>(compressedData.data()), compressedSize);
-
-        // Close the file
-        out.close();
     }
 
     void OutputParticleSystemAsVTU(std::shared_ptr<thrust::host_vector<Particle>> particles_ptr, fs::path path) {
