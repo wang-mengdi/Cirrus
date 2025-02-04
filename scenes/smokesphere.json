@@ -3,7 +3,7 @@
         "cfl": 0.5,
         "first_frame": 0,
         "fps": 200,
-        "last_frame": 1,
+        "last_frame": 400,
         "min_step_frame_fraction": 0.0,
         "output_base_dir": "./output/smokesphere",
         "queue_size": 10,
