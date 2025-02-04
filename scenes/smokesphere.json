@@ -1,0 +1,24 @@
+{
+    "driver": {
+        "cfl": 0.5,
+        "first_frame": 0,
+        "fps": 200,
+        "last_frame": 1,
+        "min_step_frame_fraction": 0.0,
+        "output_base_dir": "./output/smokesphere",
+        "queue_size": 10,
+        "snapshot_stride": 0
+    },
+    "scene": {
+        "coarse_level": 1,
+        "fine_level": 6,
+        "flowmap_stride": 5,
+        "refine_threshold": 0.1,
+        "gravity": 0.0,
+        "particle_life": 0.5,
+        "test": "smokesphere",
+        "sdf_isovalue": 0.025,
+        "reserve_particles_m": 20
+    },
+    "simulator": "euler"
+}

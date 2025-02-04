@@ -1,6 +1,7 @@
 proj/*/build/
 build/
 bin/
+output/
 .vs/
 *.swp
 *.vshistory/
