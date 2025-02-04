@@ -601,7 +601,6 @@ public:
 			return false;
 		}
 		else if (mTestCase == SMOKESPHERE) {
-			return true;
 			auto pos = acc.cellCenter(info, l_ijk);
 			T gen_radius = smokesphere_radius + 0.025;
 			if ((pos - smokesphere_center).length() <= gen_radius) {
