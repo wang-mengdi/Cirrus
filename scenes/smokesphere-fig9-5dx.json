@@ -17,7 +17,7 @@
         "gravity": 0.0,
         "particle_life": 0.5,
         "test": "smokesphere",
-        "sdf_isovalue": 0.025,
+        "sdf_isovalue": 0.01,
         "reserve_particles_m": 20
     },
     "simulator": "euler"
