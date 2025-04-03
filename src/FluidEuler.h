@@ -891,6 +891,13 @@ public:
 					auto pos2 = SemiLagrangianBackwardPosition(last_acc, pos, dt, u_channel, last_u_node_channel);
 					auto dye2 = InterpolateCellValue(last_acc, pos2, Tile::dye_channel, last_dye_node_channel);
 					tile(Tile::dye_channel, l_ijk) = dye2;
+
+					////SL velocity advection
+					//for (int axis : {0, 1, 2}) {
+					//	auto fpos = acc.faceCenter(axis, info, l_ijk); //face center position for advection
+					//	Vec fpos2 = SemiLagrangianBackwardPosition(last_acc, fpos, dt, u_channel, last_u_node_channel);
+					//	tile(Tile::u_channel + axis, l_ijk) = InterpolateFaceValue(last_acc, fpos2, u_channel, last_u_node_channel)[axis];
+					//}
 				}
 
 				{
