@@ -31,6 +31,9 @@ public:
 
     void VCycle(HADeviceGrid<Tile>& grid, int x_channel, int f_channel, const int D_channel, int level_iters, int coarsest_iters);
 
+    std::tuple<int, double> dampedJacobiSolve(HADeviceGrid<Tile>& grid, bool verbose, int max_iters, double relative_tolerance, const T omega);
+
+
     //solve -lap(x_channel)=b_channel
     //b channel will be modified
     //return: (num_iters, relative_residual)

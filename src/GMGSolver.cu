@@ -196,7 +196,7 @@ __global__ void NegativeLaplacianSameLevel128Kernel(HATileAccessor<Tile> acc, HA
 //we need to calculate laplacian either on all leafs, or on a specific level
 void NegativeLaplacianSameLevel128(HADeviceGrid<Tile>& grid, thrust::device_vector<HATileInfo<Tile>>& tiles, int launch_tile_num, int subtree_level, uint8_t launch_tile_types, int x_channel, int Ax_channel, bool calc_diag) {
     laplacian_total_tile_counts += launch_tile_num;
-    NegativeLaplacianSameLevel128Kernel << <launch_tile_num, 128 >> > (grid.deviceAccessor(), thrust::raw_pointer_cast(tiles.data()), subtree_level, launch_tile_types, x_channel, Ax_channel);
+    NegativeLaplacianSameLevel128Kernel << <launch_tile_num, 128 >> > (grid.deviceAccessor(), thrust::raw_pointer_cast(tiles.data()), subtree_level, launch_tile_types, x_channel, Ax_channel, calc_diag);
 }
 
 //on all leafs of the tree
@@ -444,6 +444,88 @@ void GMGSolver::VCycle(HADeviceGrid<Tile>& grid, int x_channel, int f_channel, c
         //smoothing: fine.x = smooth(fine.b)
 		GaussSeidelGMG(level_iters, 1, grid, i, x_channel, rhs_channel);
     }
+}
+
+std::tuple<int, double> GMGSolver::dampedJacobiSolve(HADeviceGrid<Tile>& grid, bool verbose, int max_iters, double relative_tolerance, const T omega)
+{
+    auto x_channel = Tile::x_channel;//0
+    auto rhs_channel = Tile::b_channel;//1
+    int Ax_channel = 2;
+    int D_channel = 3;
+
+    //set initial guess to 0
+    grid.launchVoxelFuncOnAllTiles(
+        [=]__device__(HATileAccessor<Tile>&acc, HATileInfo<Tile>&info, const Coord & l_ijk) {
+        auto& tile = info.tile();
+        int vi = acc.localCoordToOffset(l_ijk);
+        //initial guess is 0 for LEAF | NONLEAF | GHOST cells
+        tile(x_channel, vi) = 0;
+    },
+        LEAF | NONLEAF | GHOST, 4
+    );
+
+    double rhs_norm = sqrt(Dot(grid, rhs_channel, rhs_channel, LEAF | NONLEAF | GHOST));
+    double threshold_norm = relative_tolerance * rhs_norm;
+    threshold_norm = std::max(threshold_norm, std::numeric_limits<double>::min());
+
+    if (verbose) Info("DampedJacobi iter 0 norm {}(1.0)", rhs_norm);
+
+    int i = 0;
+    double residual_norm = rhs_norm;
+    for (i = 0; i < max_iters; i++) {
+        //calculate Ax
+        FullNegativeLaplacian(grid, x_channel, Ax_channel, false);
+        //calculate residual: r = b - Ax to AX_channel
+        grid.launchVoxelFuncOnAllTiles(
+            [=]__device__(HATileAccessor<Tile>&acc, HATileInfo<Tile>&info, const Coord & l_ijk) {
+            auto& tile = info.tile();
+            int vi = acc.localCoordToOffset(l_ijk);
+            if (tile.type(vi) & INTERIOR) {
+                T b = tile(rhs_channel, vi);
+                T Ax = tile(Ax_channel, vi);
+                tile(Ax_channel, vi) = b - Ax; // now rhs_channel holds the residual
+            }
+        },
+            LEAF, 4
+        );
+
+        residual_norm = sqrt(Dot(grid, Ax_channel, Ax_channel, LEAF));
+        if (verbose) {
+            Info("DampedJacobi iter {} norm {}({})", i + 1, residual_norm, sqrt(residual_norm / rhs_norm));
+        }
+        if (residual_norm < threshold_norm) {
+            break;
+        }
+
+
+
+        //calculate D
+        FullNegativeLaplacian(grid, x_channel, D_channel, true);
+        //Info("linf of D: {}", NormSync(grid,-1, D_channel,false)); // for debugging purposes, to see if D is well computed
+
+
+        //update damped jacobian
+        grid.launchVoxelFuncOnAllTiles(
+            [=]__device__(HATileAccessor<Tile>&acc, HATileInfo<Tile>&info, const Coord & l_ijk) {
+            auto& tile = info.tile();
+            int vi = acc.localCoordToOffset(l_ijk);
+            if (tile.type(vi) & INTERIOR) {
+                T D = tile(D_channel, vi);
+                if (D == 0) {
+                    // avoid division by zero
+                    tile(x_channel, vi) = 0;
+                }
+                else {
+                    T r = tile(Ax_channel, vi); // residual in Ax_channel
+                    tile(x_channel, vi) += omega * r / D;
+                }
+            }
+        },
+            LEAF, 4
+        );
+    }
+
+    return std::make_tuple(i, residual_norm / rhs_norm);
 }
 
 std::tuple<int, double> GMGSolver::solve(HADeviceGrid<Tile>& grid, bool verbose, int max_iters, double relative_tolerance, int level_iters, int coarsest_iters, int sync_stride, bool is_pure_neumann)
