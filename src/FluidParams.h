@@ -52,6 +52,7 @@ public:
 	int mFineLevel;
 	T mRefineThreshold;
 	T mParticleLife;
+	T mPureSDFGenerationThreshold = 0.010;
 	nanovdb::Vec3R mGravity;
 	MaskGridAccessor mMaskGridAccessor;
 	SDFGridAccessor mSDFGridAccessor;
@@ -602,7 +603,7 @@ public:
 		}
 		else if (mTestCase == SMOKESPHERE) {
 			auto pos = acc.cellCenter(info, l_ijk);
-			T gen_radius = smokesphere_radius + 0.025;
+			T gen_radius = smokesphere_radius + mPureSDFGenerationThreshold;
 			if ((pos - smokesphere_center).length() <= gen_radius) {
 				return true;
 			}

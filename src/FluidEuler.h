@@ -344,9 +344,9 @@ public:
 		//Info("before init"); PrintMemoryInfo();
 
 		std::string sdf_grid_file = Json::Value<std::string>(j, "sdf_grid_file", "");
+		float sdf_isovalue = Json::Value<float>(j, "sdf_isovalue", 0.025);
 		if (sdf_grid_file != "") {
 			float solid_isovalue = Json::Value<float>(j, "solid_isovalue", 0);
-			float sdf_isovalue = Json::Value<float>(j, "sdf_isovalue", 0.025);
 			mMaskGrid = std::make_shared<MaskGrid>(sdf_grid_file, solid_isovalue, sdf_isovalue);
 		}
 		else {
@@ -369,6 +369,7 @@ public:
 		float reserve_particles_m = Json::Value<float>(j, "reserve_particles_m", 1.0);
 		particles.reserve((size_t)(reserve_particles_m * 1024 * 1024));
 		mParams = FluidParams(j, mMaskGrid, mSDFGrid);
+		mParams.mPureSDFGenerationThreshold = sdf_isovalue;
 
 		if (mParams.mTestCase == BAT) {
 			float solid_ext_isovalue = Json::Value<float>(j, "solid_ext_isovalue", 0);
@@ -598,6 +599,7 @@ public:
 		timer.start();
 		//auto [iters, err] = ConjugateGradientSync(grid, false, 1000, 2, 10, 1e-6, false);
 		auto [iters, err] = solver.solve(grid, false, 1000, 1e-6, 1, 10, 1, mParams.mIsPureNeumann);
+		//auto [iters, err] = solver.dampedJacobiSolve(grid, false, 10, 1e-6, 1.0);
 		cudaDeviceSynchronize();
 		double elapsed = timer.stop("MGPCG");
 		double total_cells = grid.numTotalTiles() * Tile::SIZE;
