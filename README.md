@@ -1,6 +1,8 @@
 # *Cirrus*: Adaptive Hybrid Particle-Grid Flow Maps on GPU
 
-Webpage: [https://wang-mengdi.github.io/proj/25-cirrus/](https://wang-mengdi.github.io/proj/25-cirrus/)
+This repo stores the source code of our SIGGRAPH 2025 paper ***Cirrus*: Adaptive Hybrid Particle-Grid Flow Maps on GPU.**
+
+Paper webpage: [https://wang-mengdi.github.io/proj/25-cirrus/](https://wang-mengdi.github.io/proj/25-cirrus/)
 
 <figure>
   <img src="./representative-image.jpg" align="left" width="100%" style="margin: 0% 5% 2.5% 0%">
