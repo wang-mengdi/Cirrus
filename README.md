@@ -6,10 +6,6 @@
 
 This repo stores the source code of our SIGGRAPH 2025 paper ***Cirrus*: Adaptive Hybrid Particle-Grid Flow Maps on GPU.**
 
-
-
-Paper webpage: [https://wang-mengdi.github.io/proj/25-cirrus/](https://wang-mengdi.github.io/proj/25-cirrus/)
-
 <figure>
   <img src="./representative-image.jpg" align="left" width="100%" style="margin: 0% 5% 2.5% 0%">
   <figcaption>Left: smoke (large) passing a racing car and its vorticity field (small). Right: smoke (large) passing an aircraft with 4 rotating propellers at a 15-degree angle of attack and its vorticity field (small). The wingtip vortices are captured by our algorithm in the vorticity field. Effective resolutions are 512x512x1024 on our adaptive grid implemented on GPU.</figcaption>
