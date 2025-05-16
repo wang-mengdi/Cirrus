@@ -2,8 +2,8 @@
 
 [**Mengdi Wang** ](https://wang-mengdi.github.io/), [Fan Feng](https://sking8.github.io/), Junlin Li, [Bo Zhu](https://www.cs.dartmouth.edu/~bozhu/)
 
-[![preprint](https://img.shields.io/badge/Paper-Preprint-red)](https://wang-mengdi.github.io/proj/25-cirrus/cirrus-preprint.pdf)
 [![webpage](https://img.shields.io/badge/Project-Homepage-green)](https://wang-mengdi.github.io/proj/25-cirrus/)
+[![paper](https://img.shields.io/badge/Paper-Preprint-red)](https://wang-mengdi.github.io/proj/25-cirrus/cirrus-preprint.pdf)
 [![code](https://img.shields.io/badge/Source_Code-Github-blue)](https://github.com/wang-mengdi/Cirrus)
 
 This repo stores the source code of our SIGGRAPH 2025 paper ***Cirrus*: Adaptive Hybrid Particle-Grid Flow Maps on GPU.**
