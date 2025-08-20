@@ -5,7 +5,7 @@ includes("./common/xmake.lua")
 
 add_requires("eigen >=3.4.0")
 add_requires("cuda", {system = true})
-add_requires("vtk >=9.3.1", {configs = {cuda = true}})
+add_requires("vtk =9.3.1", {configs = {cuda = true}})
 add_requires("polyscope =2.3")
 add_requireconfs("polyscope.imgui", {override = true, version = "1.91.1"})
 
