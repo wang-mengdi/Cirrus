@@ -37,3 +37,5 @@ To run a simulation:
 ```bash
 xmake r scenes/smokesphere.json
 ```
+
+That runs for 67 seconds on a desktop with Intel i9-14900KF CPU, RTX 4090 (24G dedicated VRAM) GPU and 64G memory.
