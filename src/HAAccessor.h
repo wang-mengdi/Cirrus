@@ -170,14 +170,14 @@ public:
 	//C means coord, it's f(ijk)
 	template<class FuncC>
 	__hostdev__ static void iterateNeighborCoords(const Coord& ijk, FuncC f) {
-		for (int i = 0; i < NUMNEIGHBORS; i++) {
+		for (int i = 0; i < HACoordAccessor<Tile>::NUMNEIGHBORS; i++) {
 			f(ijk + neighborOffset(i));
 		}
 	}
 
 	template<class FuncC>
 	__hostdev__ static void iterateChildCoords(const Coord& ijk, FuncC f) {
-		for (int i = 0; i < NUMCHILDREN; i++) {
+		for (int i = 0; i < HACoordAccessor<Tile>::NUMCHILDREN; i++) {
 			f(childCoord(ijk, i));
 		}
 	}
@@ -412,7 +412,7 @@ public:
 	template<class FuncBC>
 	__hostdev__ void iterateChildVoxels(const HATileInfo<Tile>& info, const Coord& l_ijk, FuncBC f)const {
 		auto g_ijk = composeGlobalCoord(info.mTileCoord, l_ijk);
-		for (int s = 0; s < NUMCHILDREN; s++) {
+		for (int s = 0; s < Base::NUMCHILDREN; s++) {
 			Coord c_g_ijk = childCoord(g_ijk, s);
 			HATileInfo<Tile> c_info; Coord c_l_ijk;
 			findVoxel(info.mLevel + 1, c_g_ijk, c_info, c_l_ijk);

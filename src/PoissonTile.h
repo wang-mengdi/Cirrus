@@ -27,11 +27,11 @@ public:
     //static constexpr uint32_t c2_channel = 13;
     //static constexpr uint32_t c3_channel = 14;
 
-    using T = typename Type;
-    using CoordType = typename nanovdb::Coord;
-    using Coord = typename CoordType;
-    using VecType = typename nanovdb::Vec3<T>;
-    using CoordAcc = typename HACoordAccessor<PoissonTile<T>>;
+    using T = Type;
+    using CoordType = nanovdb::Coord;
+    using Coord = CoordType;
+    using VecType = nanovdb::Vec3<T>;
+    using CoordAcc = HACoordAccessor<PoissonTile<T>>;
     constexpr static uint32_t LOG2DIM = 3;
     constexpr static uint32_t DIM = 1u << LOG2DIM; // this tile stores (DIM*DIM*DIM) voxels (default 8^3=512)
     static constexpr uint32_t SIZE = 1u << (3 * LOG2DIM); // total number of voxels

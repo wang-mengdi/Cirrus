@@ -7,6 +7,7 @@
 
 #include "Simulator.h"
 #include "MetaData.h"
+#include <fstream>
 
 class DriverTimer {
 public:
@@ -43,7 +44,7 @@ namespace DriverFunc {	//will change timer
 		//FileFunc::CreateDirectory(meta_data.output_base_dir);
 		fs::path dump_file = fs::path(meta_data.output_base_dir) / fs::path("config.json");
 		std::ofstream dump_output(dump_file.string());
-		dump_output << std::setw(4) << j;
+		dump_output << j.dump(4);
 		dump_output.close();
 		Advance(simulator, meta_data);
 	}

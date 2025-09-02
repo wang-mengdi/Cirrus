@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cfloat> // for FLT_MAX
+
 #include "HAGrid.h"
 #include "PoissonTile.h"
 

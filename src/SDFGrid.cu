@@ -74,7 +74,7 @@ __hostdev__ bool MaskGridAccessor::GetMaskIso(const Vec& pos) const {
 }
 
 // Constructor: initializes the grid based on the input file
-MaskGrid::MaskGrid(const fs::path& filename, float solid_isovalue, float gen_isovalue) const {
+MaskGrid::MaskGrid(const fs::path& filename, float solid_isovalue, float gen_isovalue) {
     // Read grid info and SDF values from binary file
     std::vector<float> sdf_data;
     ReadSDFFile(filename, sdf_data);
@@ -127,7 +127,7 @@ MaskGridAccessor MaskGrid::GetDeviceAccessor() {
 void MaskGrid::ReadSDFFile(const fs::path& filename, std::vector<float>& sdf_data) {
     FILE* file = fopen(filename.string().c_str(), "rb");
     if (!file) {
-        Assert(false, "Failed to open the file {}", filename);
+        Assert(false, "Failed to open the file {}", filename.string());
         return;
     }
     float sx, sy, sz;
