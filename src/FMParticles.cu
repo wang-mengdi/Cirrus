@@ -5,7 +5,6 @@
 
 #include <cub/cub.cuh>
 #include <thrust/remove.h>
-#include <polyscope/polyscope.h>
 #include "FluidEuler.h"
 #include <cub/cub.cuh>
 #include <cub/device/device_scan.cuh>

@@ -16,9 +16,6 @@
 #include "FMParticles.h"
 
 
-#include <polyscope/polyscope.h>
-#include <polyscope/point_cloud.h>
-
 #include <sys/types.h>
 
 #ifdef _WIN32

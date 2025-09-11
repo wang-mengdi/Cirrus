@@ -20,27 +20,11 @@
 #include "vtkXMLHierarchicalBoxDataWriter.h"
 #include <vtkXMLImageDataWriter.h>
 
-//#include <zlib.h>
 
-//#include <AMReX.H>
-//#include <AMReX_AmrCore.H>
-//#include <AMReX_AmrLevel.H>
-//#include <AMReX_FArrayBox.H>
-//#include <AMReX_PlotFileUtil.H>
-//#include <AMReX_MultiFab.H>
-//#include <AMReX_BoxArray.H>
-//#include <AMReX_DistributionMapping.H>
-//#include <AMReX_Geometry.H>
-//#include <AMReX_ParallelDescriptor.H>
-//#include <AMReX_Vector.H>
-//#include <AMReX_PlotFileUtil.H>
-
-//#include <hdf5.h>
-
-#include <polyscope/polyscope.h>
-#include <polyscope/point_cloud.h>
-#include <polyscope/surface_mesh.h>
-#include <polyscope/volume_mesh.h>
+//#include <polyscope/polyscope.h>
+//#include <polyscope/point_cloud.h>
+//#include <polyscope/surface_mesh.h>
+//#include <polyscope/volume_mesh.h>
 
 
 namespace IOFunc {
@@ -189,25 +173,7 @@ namespace IOFunc {
 		OutputParticleSystemAsVTU(particles_ptr, path);
     }
 
-    void AddParticleSystemToPolyscope(thrust::device_vector<Particle> particles_d, std::string name) {
-		thrust::host_vector<Particle> particles = particles_d;
 
-        std::vector<Vec> positions;
-        std::vector<Vec> impulses;
-
-        positions.reserve(particles.size());
-		impulses.reserve(particles.size());
-
-        for (int i = 0; i < particles.size(); i++) {
-            auto p = particles[i].pos;
-            auto v = particles[i].impulse;
-            positions.emplace_back(p[0], p[1], p[2]);
-            impulses.emplace_back(v[0], v[1], v[2]);
-        }
-
-        polyscope::PointCloud* psCloud = polyscope::registerPointCloud(name, positions);
-        psCloud->addVectorQuantity("impulse", impulses);
-    }
 
     void OutputTilesAsVTU(std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, const fs::path& path) {
         using Coord = typename Tile::CoordType;
@@ -542,346 +508,366 @@ namespace IOFunc {
         timer.stop(fmt::format("Output grid to structured .vti file: {}", path.string()));
     }
 
-    void AddTilesToPolyscopeVolumetricMesh(HADeviceGrid<Tile>& grid, const uint8_t types, std::string name) {
-        using Coord = typename Tile::CoordType;
+    //void AddParticleSystemToPolyscope(thrust::device_vector<Particle> particles_d, std::string name) {
+    //    thrust::host_vector<Particle> particles = particles_d;
 
-        int hex_offs[8][3] = {
-            {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0},
-            {0,0,1}, {1,0,1}, {1,1,1}, {0,1,1}
-        };
+    //    std::vector<Vec> positions;
+    //    std::vector<Vec> impulses;
 
-        std::vector<Vec> vertices;
-        std::vector<std::array<size_t, 8>> hexCells;
-        std::vector<int> cellLevels;
-        std::vector<Coord> cellCoords;
-        std::vector<int> cellInterestFlags;
+    //    positions.reserve(particles.size());
+    //    impulses.reserve(particles.size());
 
-        auto acc = grid.hostAccessor();
+    //    for (int i = 0; i < particles.size(); i++) {
+    //        auto p = particles[i].pos;
+    //        auto v = particles[i].impulse;
+    //        positions.emplace_back(p[0], p[1], p[2]);
+    //        impulses.emplace_back(v[0], v[1], v[2]);
+    //    }
 
-        for (int level = 0; level < grid.mNumLayers; level++) {
-            for (int i = 0; i < grid.hNumTiles[level]; i++) {
-                auto& info = grid.hTileArrays[level][i];
-                if (info.mType & types) {
-                    auto bbox = acc.tileBBox(info);
-                    std::array<size_t, 8> hexCell;
+    //    polyscope::PointCloud* psCloud = polyscope::registerPointCloud(name, positions);
+    //    psCloud->addVectorQuantity("impulse", impulses);
+    //}
 
-                    for (int s = 0; s < 8; s++) {
-                        Coord off(hex_offs[s][0], hex_offs[s][1], hex_offs[s][2]);
-                        auto p = bbox.min() + Vec(off[0], off[1], off[2]) * bbox.dim();
-                        Vec vertex(p[0], p[1], p[2]);
+  //  void AddTilesToPolyscopeVolumetricMesh(HADeviceGrid<Tile>& grid, const uint8_t types, std::string name) {
+  //      using Coord = typename Tile::CoordType;
 
-                        auto it = std::find(vertices.begin(), vertices.end(), vertex);
-                        if (it != vertices.end()) {
-                            hexCell[s] = std::distance(vertices.begin(), it);
-                        }
-                        else {
-                            vertices.push_back(vertex);
-                            hexCell[s] = vertices.size() - 1;
-                        }
-                    }
+  //      int hex_offs[8][3] = {
+  //          {0,0,0}, {1,0,0}, {1,1,0}, {0,1,0},
+  //          {0,0,1}, {1,0,1}, {1,1,1}, {0,1,1}
+  //      };
 
-                    hexCells.push_back(hexCell);
-                    cellLevels.push_back(level);
-                    cellCoords.push_back(info.mTileCoord);
+  //      std::vector<Vec> vertices;
+  //      std::vector<std::array<size_t, 8>> hexCells;
+  //      std::vector<int> cellLevels;
+  //      std::vector<Coord> cellCoords;
+  //      std::vector<int> cellInterestFlags;
 
-                    auto tile = info.getTile(DEVICE);
-                    cellInterestFlags.push_back(tile.mIsInterestArea);
-                }
-            }
-        }
+  //      auto acc = grid.hostAccessor();
 
-        auto mesh = polyscope::registerVolumeMesh(name, vertices, hexCells);
-        mesh->addCellScalarQuantity("Level", cellLevels);
-        mesh->addCellVectorQuantity("Tile Coord", cellCoords);
-		mesh->addCellScalarQuantity("Interest Flag", cellInterestFlags);
-        mesh->setTransparency(0.2);
-    }
+  //      for (int level = 0; level < grid.mNumLayers; level++) {
+  //          for (int i = 0; i < grid.hNumTiles[level]; i++) {
+  //              auto& info = grid.hTileArrays[level][i];
+  //              if (info.mType & types) {
+  //                  auto bbox = acc.tileBBox(info);
+  //                  std::array<size_t, 8> hexCell;
 
-    void AddLeveledPoissonGridCellCentersToPolyscopePointCloud(std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, const std::vector<std::pair<int, std::string>> scalar_channels, std::vector<std::pair<int, std::string>> vec_channels, const double invalid_value) {
-        auto& holder = *holder_ptr;
-        using Coord = typename Tile::CoordType;
+  //                  for (int s = 0; s < 8; s++) {
+  //                      Coord off(hex_offs[s][0], hex_offs[s][1], hex_offs[s][2]);
+  //                      auto p = bbox.min() + Vec(off[0], off[1], off[2]) * bbox.dim();
+  //                      Vec vertex(p[0], p[1], p[2]);
 
-        auto acc = holder.coordAccessor();
-        auto add_data = [&](const int level, const uint8_t tile_types, const std::string name) {
-            std::vector<Vec> points;
-            std::vector<int> levels;
-            std::vector<int> ttypes;
-            std::vector<Coord> ijk_values;
+  //                      auto it = std::find(vertices.begin(), vertices.end(), vertex);
+  //                      if (it != vertices.end()) {
+  //                          hexCell[s] = std::distance(vertices.begin(), it);
+  //                      }
+  //                      else {
+  //                          vertices.push_back(vertex);
+  //                          hexCell[s] = vertices.size() - 1;
+  //                      }
+  //                  }
 
-            std::vector<std::vector<float>> scalar_data(scalar_channels.size());
-            std::vector<std::vector<Vec>> vec_data(vec_channels.size());
+  //                  hexCells.push_back(hexCell);
+  //                  cellLevels.push_back(level);
+  //                  cellCoords.push_back(info.mTileCoord);
 
-            for (auto& info : holder.mHostLevels[level]) {
-                if (!(info.mType & tile_types)) continue;
-                auto& tile = info.tile();
+  //                  auto tile = info.getTile(DEVICE);
+  //                  cellInterestFlags.push_back(tile.mIsInterestArea);
+  //              }
+  //          }
+  //      }
 
-                for (int i = 0; i < Tile::DIM; i++) {
-                    for (int j = 0; j < Tile::DIM; j++) {
-                        for (int k = 0; k < Tile::DIM; k++) {
-                            Coord l_ijk(i, j, k);
-                            auto pos = acc.cellCenter(info, l_ijk); // 使用cellCenter代替cellCorner
-                            points.push_back(pos);
-                            levels.push_back(level);
-                            ttypes.push_back(info.mType);
+  //      auto mesh = polyscope::registerVolumeMesh(name, vertices, hexCells);
+  //      mesh->addCellScalarQuantity("Level", cellLevels);
+  //      mesh->addCellVectorQuantity("Tile Coord", cellCoords);
+		//mesh->addCellScalarQuantity("Interest Flag", cellInterestFlags);
+  //      mesh->setTransparency(0.2);
+  //  }
 
-                            auto g_ijk = acc.localToGlobalCoord(info, l_ijk);
-                            ijk_values.push_back(g_ijk);
+  //  void AddLeveledPoissonGridCellCentersToPolyscopePointCloud(std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, const std::vector<std::pair<int, std::string>> scalar_channels, std::vector<std::pair<int, std::string>> vec_channels, const double invalid_value) {
+  //      auto& holder = *holder_ptr;
+  //      using Coord = typename Tile::CoordType;
 
-                            for (int s = 0; s < scalar_channels.size(); s++) {
-                                int channel = scalar_channels[s].first;
-                                T f = (channel == -1) ? tile.type(l_ijk) : tile(scalar_channels[s].first, l_ijk);
-                                if (isnan(f) || isinf(f)) f = invalid_value;
-                                scalar_data[s].push_back(f);
-                            }
+  //      auto acc = holder.coordAccessor();
+  //      auto add_data = [&](const int level, const uint8_t tile_types, const std::string name) {
+  //          std::vector<Vec> points;
+  //          std::vector<int> levels;
+  //          std::vector<int> ttypes;
+  //          std::vector<Coord> ijk_values;
 
-                            for (int t = 0; t < vec_channels.size(); t++) {
-                                int u_channel = vec_channels[t].first;
-                                auto u = tile(u_channel, l_ijk);
-                                auto v = tile(u_channel + 1, l_ijk);
-                                auto w = tile(u_channel + 2, l_ijk);
-                                vec_data[t].push_back({ u, v, w });
-                            }
-                        }
-                    }
-                }
-            }
+  //          std::vector<std::vector<float>> scalar_data(scalar_channels.size());
+  //          std::vector<std::vector<Vec>> vec_data(vec_channels.size());
 
-            if (points.empty()) return;
-                
-            auto ps = polyscope::registerPointCloud(name, points);
-            ps->addScalarQuantity("Level", levels);
-            ps->addVectorQuantity("IJK", ijk_values);
-            ps->addScalarQuantity("Tile Type", ttypes);
+  //          for (auto& info : holder.mHostLevels[level]) {
+  //              if (!(info.mType & tile_types)) continue;
+  //              auto& tile = info.tile();
 
-            for (int s = 0; s < scalar_channels.size(); s++) {
-                ps->addScalarQuantity(scalar_channels[s].second, scalar_data[s]);
-            }
+  //              for (int i = 0; i < Tile::DIM; i++) {
+  //                  for (int j = 0; j < Tile::DIM; j++) {
+  //                      for (int k = 0; k < Tile::DIM; k++) {
+  //                          Coord l_ijk(i, j, k);
+  //                          auto pos = acc.cellCenter(info, l_ijk); // 使用cellCenter代替cellCorner
+  //                          points.push_back(pos);
+  //                          levels.push_back(level);
+  //                          ttypes.push_back(info.mType);
 
-            for (int v = 0; v < vec_channels.size(); v++) {
-                ps->addVectorQuantity(vec_channels[v].second, vec_data[v]);
-            }
-            };
+  //                          auto g_ijk = acc.localToGlobalCoord(info, l_ijk);
+  //                          ijk_values.push_back(g_ijk);
 
-        for (int level = 0; level <= holder.mMaxLevel; level++) {
-            add_data(level, LEAF, fmt::format("Level{}LEAF", level));
-            add_data(level, GHOST, fmt::format("Level{}GHOST", level));
-            add_data(level, NONLEAF, fmt::format("Level{}NONLEAF", level));
-        }
-    }
+  //                          for (int s = 0; s < scalar_channels.size(); s++) {
+  //                              int channel = scalar_channels[s].first;
+  //                              T f = (channel == -1) ? tile.type(l_ijk) : tile(scalar_channels[s].first, l_ijk);
+  //                              if (isnan(f) || isinf(f)) f = invalid_value;
+  //                              scalar_data[s].push_back(f);
+  //                          }
 
-    void AddPoissonGridCellCentersToPolyscopePointCloud(std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, const std::vector<std::pair<int, std::string>> scalar_channels, std::vector<std::pair<int, std::string>> vec_channels, const double invalid_value) {
-        auto& holder = *holder_ptr;
-        using Coord = typename Tile::CoordType;
+  //                          for (int t = 0; t < vec_channels.size(); t++) {
+  //                              int u_channel = vec_channels[t].first;
+  //                              auto u = tile(u_channel, l_ijk);
+  //                              auto v = tile(u_channel + 1, l_ijk);
+  //                              auto w = tile(u_channel + 2, l_ijk);
+  //                              vec_data[t].push_back({ u, v, w });
+  //                          }
+  //                      }
+  //                  }
+  //              }
+  //          }
 
-        std::vector<Vec> points;
-        std::vector<int> levels;
-        std::vector<Coord> ijk_values;
+  //          if (points.empty()) return;
+  //              
+  //          auto ps = polyscope::registerPointCloud(name, points);
+  //          ps->addScalarQuantity("Level", levels);
+  //          ps->addVectorQuantity("IJK", ijk_values);
+  //          ps->addScalarQuantity("Tile Type", ttypes);
 
-        std::vector<std::vector<float>> scalar_data(scalar_channels.size());
-        std::vector<std::vector<Vec>> vec_data(vec_channels.size());
+  //          for (int s = 0; s < scalar_channels.size(); s++) {
+  //              ps->addScalarQuantity(scalar_channels[s].second, scalar_data[s]);
+  //          }
 
-        auto acc = holder.coordAccessor();
-        for (int level = 0; level <= holder.mMaxLevel; level++) {
-            for (auto& info : holder.mHostLevels[level]) {
-                if (info.isLeaf()) {
-                    auto& tile = info.tile();
+  //          for (int v = 0; v < vec_channels.size(); v++) {
+  //              ps->addVectorQuantity(vec_channels[v].second, vec_data[v]);
+  //          }
+  //          };
 
-                    for (int i = 0; i < Tile::DIM; i++) {
-                        for (int j = 0; j < Tile::DIM; j++) {
-                            for (int k = 0; k < Tile::DIM; k++) {
-                                Coord l_ijk(i, j, k);
-                                auto pos = acc.cellCenter(info, l_ijk); // 使用cellCenter代替cellCorner
-                                points.push_back(pos);
-                                levels.push_back(level);
+  //      for (int level = 0; level <= holder.mMaxLevel; level++) {
+  //          add_data(level, LEAF, fmt::format("Level{}LEAF", level));
+  //          add_data(level, GHOST, fmt::format("Level{}GHOST", level));
+  //          add_data(level, NONLEAF, fmt::format("Level{}NONLEAF", level));
+  //      }
+  //  }
 
-								auto g_ijk = acc.localToGlobalCoord(info, l_ijk);
-                                ijk_values.push_back(g_ijk);
+  //  void AddPoissonGridCellCentersToPolyscopePointCloud(std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, const std::vector<std::pair<int, std::string>> scalar_channels, std::vector<std::pair<int, std::string>> vec_channels, const double invalid_value) {
+  //      auto& holder = *holder_ptr;
+  //      using Coord = typename Tile::CoordType;
 
-                                for (int s = 0; s < scalar_channels.size(); s++) {
-                                    int channel = scalar_channels[s].first;
-                                    T f = (channel == -1) ? tile.type(l_ijk) : tile(scalar_channels[s].first, l_ijk);
-                                    //if(channel!=-1) Info("channel {} l_ijk: {}, f: {}", channel, l_ijk, f);
-                                    if (isnan(f) || isinf(f)) f = invalid_value;
-                                    scalar_data[s].push_back(f);
-                                }
+  //      std::vector<Vec> points;
+  //      std::vector<int> levels;
+  //      std::vector<Coord> ijk_values;
 
-                                for (int t = 0; t < vec_channels.size(); t++) {
-                                    int u_channel = vec_channels[t].first;
-                                    auto u = tile(u_channel, l_ijk);
-                                    auto v = tile(u_channel + 1, l_ijk);
-                                    auto w = tile(u_channel + 2, l_ijk);
-                                    vec_data[t].push_back({ u, v, w });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+  //      std::vector<std::vector<float>> scalar_data(scalar_channels.size());
+  //      std::vector<std::vector<Vec>> vec_data(vec_channels.size());
 
-        polyscope::registerPointCloud("Poisson Grid", points);
-        polyscope::getPointCloud("Poisson Grid")->addScalarQuantity("Level", levels);
-        polyscope::getPointCloud("Poisson Grid")->addVectorQuantity("IJK", ijk_values);
+  //      auto acc = holder.coordAccessor();
+  //      for (int level = 0; level <= holder.mMaxLevel; level++) {
+  //          for (auto& info : holder.mHostLevels[level]) {
+  //              if (info.isLeaf()) {
+  //                  auto& tile = info.tile();
 
-        for (int s = 0; s < scalar_channels.size(); s++) {
-            polyscope::getPointCloud("Poisson Grid")->addScalarQuantity(scalar_channels[s].second, scalar_data[s]);
-        }
+  //                  for (int i = 0; i < Tile::DIM; i++) {
+  //                      for (int j = 0; j < Tile::DIM; j++) {
+  //                          for (int k = 0; k < Tile::DIM; k++) {
+  //                              Coord l_ijk(i, j, k);
+  //                              auto pos = acc.cellCenter(info, l_ijk); // 使用cellCenter代替cellCorner
+  //                              points.push_back(pos);
+  //                              levels.push_back(level);
 
-        for (int v = 0; v < vec_channels.size(); v++) {
-            polyscope::getPointCloud("Poisson Grid")->addVectorQuantity(vec_channels[v].second, vec_data[v]);
-        }
-    }
+		//						auto g_ijk = acc.localToGlobalCoord(info, l_ijk);
+  //                              ijk_values.push_back(g_ijk);
 
-    void AddPoissonGridFaceCentersToPolyscopePointCloud(std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, std::vector<std::pair<int, std::string>> vec_channels, const double invalid_value) {
-        auto& holder = *holder_ptr;
-        using Coord = typename Tile::CoordType;
+  //                              for (int s = 0; s < scalar_channels.size(); s++) {
+  //                                  int channel = scalar_channels[s].first;
+  //                                  T f = (channel == -1) ? tile.type(l_ijk) : tile(scalar_channels[s].first, l_ijk);
+  //                                  //if(channel!=-1) Info("channel {} l_ijk: {}, f: {}", channel, l_ijk, f);
+  //                                  if (isnan(f) || isinf(f)) f = invalid_value;
+  //                                  scalar_data[s].push_back(f);
+  //                              }
 
-        std::vector<Vec> points[3];
-        std::vector<int> levels[3];
-        std::vector<Coord> ijk_values[3];
+  //                              for (int t = 0; t < vec_channels.size(); t++) {
+  //                                  int u_channel = vec_channels[t].first;
+  //                                  auto u = tile(u_channel, l_ijk);
+  //                                  auto v = tile(u_channel + 1, l_ijk);
+  //                                  auto w = tile(u_channel + 2, l_ijk);
+  //                                  vec_data[t].push_back({ u, v, w });
+  //                              }
+  //                          }
+  //                      }
+  //                  }
+  //              }
+  //          }
+  //      }
 
-   //     std::vector<std::vector<Vec>> vec_data[3];
-   //     for (int axis : {0, 1, 2}) {
-			//vec_data[axis].resize(vec_channels.size());
-   //     }
+  //      polyscope::registerPointCloud("Poisson Grid", points);
+  //      polyscope::getPointCloud("Poisson Grid")->addScalarQuantity("Level", levels);
+  //      polyscope::getPointCloud("Poisson Grid")->addVectorQuantity("IJK", ijk_values);
 
-        std::vector<std::vector<float>> face_center_data[3];
-        for (int axis : {0, 1, 2}) {
-            face_center_data[axis].resize(vec_channels.size());
-        }
+  //      for (int s = 0; s < scalar_channels.size(); s++) {
+  //          polyscope::getPointCloud("Poisson Grid")->addScalarQuantity(scalar_channels[s].second, scalar_data[s]);
+  //      }
 
-        auto acc = holder.coordAccessor();
-        holder.iterateLeafCells([&](const HATileInfo<Tile>& info, const Coord& l_ijk) {
-            auto& tile = info.tile();
+  //      for (int v = 0; v < vec_channels.size(); v++) {
+  //          polyscope::getPointCloud("Poisson Grid")->addVectorQuantity(vec_channels[v].second, vec_data[v]);
+  //      }
+  //  }
 
-            for (int axis : {0, 1, 2}) {
-                auto pos = acc.faceCenter(axis, info, l_ijk);
-                points[axis].push_back(pos);
-                levels[axis].push_back(info.mLevel);
+  //  void AddPoissonGridFaceCentersToPolyscopePointCloud(std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, std::vector<std::pair<int, std::string>> vec_channels, const double invalid_value) {
+  //      auto& holder = *holder_ptr;
+  //      using Coord = typename Tile::CoordType;
 
-                auto g_ijk = holder.coordAccessor().localToGlobalCoord(info, l_ijk);
-                ijk_values[axis].push_back(g_ijk);
+  //      std::vector<Vec> points[3];
+  //      std::vector<int> levels[3];
+  //      std::vector<Coord> ijk_values[3];
 
-                for (int t = 0; t < vec_channels.size(); t++) {
-                    int u_channel = vec_channels[t].first;
-     //               Vec vec(0, 0, 0);
-					//vec[axis] = tile(u_channel + axis, l_ijk);
-     //               vec_data[axis][t].push_back(vec);
-                    face_center_data[axis][t].push_back(tile(u_channel + axis, l_ijk));
-                }
-            }
-            });
+  // //     std::vector<std::vector<Vec>> vec_data[3];
+  // //     for (int axis : {0, 1, 2}) {
+		//	//vec_data[axis].resize(vec_channels.size());
+  // //     }
 
-        for (int axis : {0, 1, 2}) {
-			auto pc = polyscope::registerPointCloud(fmt::format("Poisson Grid Face Centers Axis {}", axis), points[axis]);
-			pc->addScalarQuantity("Level", levels[axis]);
-			pc->addVectorQuantity("IJK", ijk_values[axis]);
-			for (int v = 0; v < vec_channels.size(); v++) {
-				//pc->addVectorQuantity(vec_channels[v].second, vec_data[axis][v]);
-				pc->addScalarQuantity(vec_channels[v].second, face_center_data[axis][v]);
-			}
-        }
-    }
+  //      std::vector<std::vector<float>> face_center_data[3];
+  //      for (int axis : {0, 1, 2}) {
+  //          face_center_data[axis].resize(vec_channels.size());
+  //      }
 
-    void AddPoissonGridNodesToPolyscope(std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, const std::vector<std::pair<int, std::string>> scalar_channels, std::vector<std::pair<int, std::string>> vec_channels, const double invalid_value) {
-        auto& holder = *holder_ptr;
-        using Coord = typename Tile::CoordType;
+  //      auto acc = holder.coordAccessor();
+  //      holder.iterateLeafCells([&](const HATileInfo<Tile>& info, const Coord& l_ijk) {
+  //          auto& tile = info.tile();
 
-        auto acc = holder.coordAccessor();
-        //polyscope::init();
+  //          for (int axis : {0, 1, 2}) {
+  //              auto pos = acc.faceCenter(axis, info, l_ijk);
+  //              points[axis].push_back(pos);
+  //              levels[axis].push_back(info.mLevel);
 
-        for (int level = 0; level <= holder.mMaxLevel; level++) {
-            std::vector<Vec> points;
-            std::vector<Coord> tile_ijks, local_ijks;
+  //              auto g_ijk = holder.coordAccessor().localToGlobalCoord(info, l_ijk);
+  //              ijk_values[axis].push_back(g_ijk);
 
-            std::vector<std::vector<float>> scalar_data(scalar_channels.size());
-            std::vector<std::vector<Vec>> vec_data(vec_channels.size());
+  //              for (int t = 0; t < vec_channels.size(); t++) {
+  //                  int u_channel = vec_channels[t].first;
+  //   //               Vec vec(0, 0, 0);
+		//			//vec[axis] = tile(u_channel + axis, l_ijk);
+  //   //               vec_data[axis][t].push_back(vec);
+  //                  face_center_data[axis][t].push_back(tile(u_channel + axis, l_ijk));
+  //              }
+  //          }
+  //          });
 
-            std::vector<Vec> tile_vertices;
-            std::vector<std::array<size_t, 4>> tile_faces;
+  //      for (int axis : {0, 1, 2}) {
+		//	auto pc = polyscope::registerPointCloud(fmt::format("Poisson Grid Face Centers Axis {}", axis), points[axis]);
+		//	pc->addScalarQuantity("Level", levels[axis]);
+		//	pc->addVectorQuantity("IJK", ijk_values[axis]);
+		//	for (int v = 0; v < vec_channels.size(); v++) {
+		//		//pc->addVectorQuantity(vec_channels[v].second, vec_data[axis][v]);
+		//		pc->addScalarQuantity(vec_channels[v].second, face_center_data[axis][v]);
+		//	}
+  //      }
+  //  }
 
-            for (auto& info : holder.mHostLevels[level]) {
-                if (info.isLeaf()) {
-                    auto& tile = info.tile();
+  //  void AddPoissonGridNodesToPolyscope(std::shared_ptr<HAHostTileHolder<Tile>> holder_ptr, const std::vector<std::pair<int, std::string>> scalar_channels, std::vector<std::pair<int, std::string>> vec_channels, const double invalid_value) {
+  //      auto& holder = *holder_ptr;
+  //      using Coord = typename Tile::CoordType;
 
-                    for (int i = 0; i <= Tile::DIM; i++) {
-                        for (int j = 0; j <= Tile::DIM; j++) {
-                            for (int k = 0; k <= Tile::DIM; k++) {
-                                Coord r_ijk(i, j, k);
-                                auto pos = acc.cellCorner(info, r_ijk);
-                                points.push_back(pos);
+  //      auto acc = holder.coordAccessor();
+  //      //polyscope::init();
 
-                                tile_ijks.push_back(info.mTileCoord);
-                                local_ijks.push_back(r_ijk);
+  //      for (int level = 0; level <= holder.mMaxLevel; level++) {
+  //          std::vector<Vec> points;
+  //          std::vector<Coord> tile_ijks, local_ijks;
 
-                                for (int s = 0; s < scalar_channels.size(); s++) {
-                                    int channel = scalar_channels[s].first;
-                                    T f = tile.node(scalar_channels[s].first, r_ijk);
-                                    if (isnan(f) || isinf(f)) f = invalid_value;
-                                    scalar_data[s].push_back(f);
-                                }
+  //          std::vector<std::vector<float>> scalar_data(scalar_channels.size());
+  //          std::vector<std::vector<Vec>> vec_data(vec_channels.size());
 
-                                for (int t = 0; t < vec_channels.size(); t++) {
-                                    int u_channel = vec_channels[t].first;
-                                    auto u = tile.node(u_channel, r_ijk);
-                                    auto v = tile.node(u_channel + 1, r_ijk);
-                                    auto w = tile.node(u_channel + 2, r_ijk);
-                                    vec_data[t].push_back({ u, v, w });
-                                }
-                            }
-                        }
-                    }
+  //          std::vector<Vec> tile_vertices;
+  //          std::vector<std::array<size_t, 4>> tile_faces;
 
-                    // Define the 8 vertices of the tile (cube)
-                    std::vector<Vec> cube_vertices;
-                    for (int dx = 0; dx <= 1; ++dx) {
-                        for (int dy = 0; dy <= 1; ++dy) {
-                            for (int dz = 0; dz <= 1; ++dz) {
-                                Coord l_ijk(dx * Tile::DIM, dy * Tile::DIM, dz * Tile::DIM);
-                                cube_vertices.push_back(acc.cellCorner(info, l_ijk));
-                            }
-                        }
-                    }
+  //          for (auto& info : holder.mHostLevels[level]) {
+  //              if (info.isLeaf()) {
+  //                  auto& tile = info.tile();
 
-                    // Add vertices to the global list
-                    auto base_idx = tile_vertices.size();
-                    tile_vertices.insert(tile_vertices.end(), cube_vertices.begin(), cube_vertices.end());
+  //                  for (int i = 0; i <= Tile::DIM; i++) {
+  //                      for (int j = 0; j <= Tile::DIM; j++) {
+  //                          for (int k = 0; k <= Tile::DIM; k++) {
+  //                              Coord r_ijk(i, j, k);
+  //                              auto pos = acc.cellCorner(info, r_ijk);
+  //                              points.push_back(pos);
 
-                    // Define the faces of the cube
-                    std::array<size_t, 4> faces[6] = {
-                        {base_idx + 0, base_idx + 1, base_idx + 3, base_idx + 2},
-                        {base_idx + 4, base_idx + 5, base_idx + 7, base_idx + 6},
-                        {base_idx + 0, base_idx + 1, base_idx + 5, base_idx + 4},
-                        {base_idx + 2, base_idx + 3, base_idx + 7, base_idx + 6},
-                        {base_idx + 0, base_idx + 2, base_idx + 6, base_idx + 4},
-                        {base_idx + 1, base_idx + 3, base_idx + 7, base_idx + 5}
-                    };
+  //                              tile_ijks.push_back(info.mTileCoord);
+  //                              local_ijks.push_back(r_ijk);
 
-                    // Add faces to the global list
-                    tile_faces.insert(tile_faces.end(), std::begin(faces), std::end(faces));
+  //                              for (int s = 0; s < scalar_channels.size(); s++) {
+  //                                  int channel = scalar_channels[s].first;
+  //                                  T f = tile.node(scalar_channels[s].first, r_ijk);
+  //                                  if (isnan(f) || isinf(f)) f = invalid_value;
+  //                                  scalar_data[s].push_back(f);
+  //                              }
 
-                }
-            }
+  //                              for (int t = 0; t < vec_channels.size(); t++) {
+  //                                  int u_channel = vec_channels[t].first;
+  //                                  auto u = tile.node(u_channel, r_ijk);
+  //                                  auto v = tile.node(u_channel + 1, r_ijk);
+  //                                  auto w = tile.node(u_channel + 2, r_ijk);
+  //                                  vec_data[t].push_back({ u, v, w });
+  //                              }
+  //                          }
+  //                      }
+  //                  }
 
-            auto level_cloud_name = fmt::format("Level {} Nodes", level);
-            auto pc = polyscope::registerPointCloud(level_cloud_name, points);
-            pc->addVectorQuantity("b_ijk", tile_ijks);
-			pc->addVectorQuantity("r_ijk", local_ijks);
+  //                  // Define the 8 vertices of the tile (cube)
+  //                  std::vector<Vec> cube_vertices;
+  //                  for (int dx = 0; dx <= 1; ++dx) {
+  //                      for (int dy = 0; dy <= 1; ++dy) {
+  //                          for (int dz = 0; dz <= 1; ++dz) {
+  //                              Coord l_ijk(dx * Tile::DIM, dy * Tile::DIM, dz * Tile::DIM);
+  //                              cube_vertices.push_back(acc.cellCorner(info, l_ijk));
+  //                          }
+  //                      }
+  //                  }
 
-            for (int s = 0; s < scalar_channels.size(); s++) {
-                pc->addScalarQuantity(scalar_channels[s].second, scalar_data[s]);
-            }
+  //                  // Add vertices to the global list
+  //                  auto base_idx = tile_vertices.size();
+  //                  tile_vertices.insert(tile_vertices.end(), cube_vertices.begin(), cube_vertices.end());
 
-            for (int v = 0; v < vec_channels.size(); v++) {
-                pc->addVectorQuantity(vec_channels[v].second, vec_data[v]);
-            }
+  //                  // Define the faces of the cube
+  //                  std::array<size_t, 4> faces[6] = {
+  //                      {base_idx + 0, base_idx + 1, base_idx + 3, base_idx + 2},
+  //                      {base_idx + 4, base_idx + 5, base_idx + 7, base_idx + 6},
+  //                      {base_idx + 0, base_idx + 1, base_idx + 5, base_idx + 4},
+  //                      {base_idx + 2, base_idx + 3, base_idx + 7, base_idx + 6},
+  //                      {base_idx + 0, base_idx + 2, base_idx + 6, base_idx + 4},
+  //                      {base_idx + 1, base_idx + 3, base_idx + 7, base_idx + 5}
+  //                  };
 
-            // Register the tile mesh for this level
-            //auto tile_mesh_name = fmt::format("Level {} Tiles", level);
-            //polyscope::registerSurfaceMesh(tile_mesh_name, tile_vertices, tile_faces);
-        }
+  //                  // Add faces to the global list
+  //                  tile_faces.insert(tile_faces.end(), std::begin(faces), std::end(faces));
 
-        //polyscope::show();
-    }
+  //              }
+  //          }
+
+  //          auto level_cloud_name = fmt::format("Level {} Nodes", level);
+  //          auto pc = polyscope::registerPointCloud(level_cloud_name, points);
+  //          pc->addVectorQuantity("b_ijk", tile_ijks);
+		//	pc->addVectorQuantity("r_ijk", local_ijks);
+
+  //          for (int s = 0; s < scalar_channels.size(); s++) {
+  //              pc->addScalarQuantity(scalar_channels[s].second, scalar_data[s]);
+  //          }
+
+  //          for (int v = 0; v < vec_channels.size(); v++) {
+  //              pc->addVectorQuantity(vec_channels[v].second, vec_data[v]);
+  //          }
+
+  //          // Register the tile mesh for this level
+  //          //auto tile_mesh_name = fmt::format("Level {} Tiles", level);
+  //          //polyscope::registerSurfaceMesh(tile_mesh_name, tile_vertices, tile_faces);
+  //      }
+
+  //      //polyscope::show();
+  //  }
 
 }

@@ -6,7 +6,7 @@
 //#include "PoissonSolverOptimized.h"
 
 #include "PoissonIOFunc.h"
-#include <polyscope/polyscope.h>
+//#include <polyscope/polyscope.h>
 
 __hostdev__ __forceinline__ int3 localIdxToInt3(int _idx)
 {
