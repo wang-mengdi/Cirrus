@@ -38,4 +38,9 @@ To run a simulation:
 xmake r cirrus scenes/smokesphere.json
 ```
 
-That runs for 67 seconds on a desktop with Intel i9-14900KF CPU, RTX 4090 (24G dedicated VRAM) GPU and 64G memory.
+That runs for 3 min 57 seconds on a desktop with Intel i9-14900KF CPU, RTX 4090 (24G dedicated VRAM) GPU and 64G memory, generating 100 frames.
+
+The result can be visualized using Paraview by:
+
+Representation - Volume
+Coloring - Vorticity
