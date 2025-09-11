@@ -317,8 +317,8 @@ void ReseedParticles(HADeviceGrid<Tile>& grid, const FluidParams& params, const 
 //	__shared__ typename BlockReduce::TempStorage temp_storage_min;
 //	__shared__ typename BlockReduce::TempStorage temp_storage_max;
 //
-//	T minValue = BlockReduce(temp_storage_min).Reduce(value, cub::Min());
-//	T maxValue = BlockReduce(temp_storage_max).Reduce(value, cub::Max());
+//	T minValue = BlockReduce(temp_storage_min).Reduce(value, thrust::minimum<T>());
+//	T maxValue = BlockReduce(temp_storage_max).Reduce(value, thrust::maximum<T>());
 //
 //	if (l_ijk == Coord(0, 0, 0)) {
 //		auto& tile = info.tile();
@@ -371,8 +371,8 @@ __global__ void LockedMarkInterestAreaMinAndMax128Kernel(HATileAccessor<PoissonT
 	__shared__ typename BlockReduce::TempStorage temp_storage_min;
 	__shared__ typename BlockReduce::TempStorage temp_storage_max;
 
-	T block_min = BlockReduce(temp_storage_min).Reduce(thread_min, cub::Min());
-	T block_max = BlockReduce(temp_storage_max).Reduce(thread_max, cub::Max());
+	T block_min = BlockReduce(temp_storage_min).Reduce(thread_min, thrust::minimum<T>());
+	T block_max = BlockReduce(temp_storage_max).Reduce(thread_max, thrust::maximum<T>());
 
 	// The first thread writes the results to the tile metadata
 	if (ti == 0) {

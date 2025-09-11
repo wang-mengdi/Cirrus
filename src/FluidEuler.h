@@ -52,7 +52,7 @@ __global__ void MarkInterestAreaWithPointFunction128Kernel(FuncV point_func, HAT
 	}
 
 	// 计算 block 内的最大值
-	T block_max = BlockReduce(temp_storage).Reduce(local_max, cub::Max());
+	T block_max = BlockReduce(temp_storage).Reduce(local_max, thrust::maximum<T>());
 
 	if (ti == 0) {
 		// 判断 block 最大值是否超过阈值

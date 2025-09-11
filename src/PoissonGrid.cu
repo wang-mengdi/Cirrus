@@ -343,7 +343,7 @@ void MeanAsync(HADeviceGrid<Tile>& grid, const int in_channel, const uint8_t lau
 //
 //    typedef cub::BlockReduce<double, Tile::DIM, cub::BLOCK_REDUCE_WARP_REDUCTIONS, Tile::DIM, Tile::DIM> BlockReduce;
 //    __shared__ typename BlockReduce::TempStorage temp_storage;
-//    double block_max = BlockReduce(temp_storage).Reduce(thread_val, cub::Max());
+//    double block_max = BlockReduce(temp_storage).Reduce(thread_val, thrust::maximum<T>());
 //
 //    if (l_ijk == Coord(0, 0, 0)) {
 //        blk_max[blockIdx.x] = block_max;
@@ -419,7 +419,7 @@ __global__ void VelocityLinfKernel(HATileAccessor<PoissonTile<T>> acc, HATileInf
     // Use CUB to perform block-wide reduction to find the maximum
     typedef cub::BlockReduce<double, 128> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
-    double block_max = BlockReduce(temp_storage).Reduce(thread_max, cub::Max());
+    double block_max = BlockReduce(temp_storage).Reduce(thread_max, thrust::maximum<T>());
 
     if (ti == 0) {
         max_values[bi] = block_max;
@@ -495,12 +495,12 @@ __global__ void VolumeWeightedNormKernel(HATileAccessor<Tile> acc, HATileInfo<Ti
 
     double ws_sum = 0, w_sum = 0;
     if (order == -1) {
-        ws_sum = BlockReduce(ws_storage).Reduce(v, cub::Max());
+        ws_sum = BlockReduce(ws_storage).Reduce(v, thrust::maximum<T>());
         w_sum = w;
     }
     else {
-        ws_sum = BlockReduce(ws_storage).Reduce(v * w, cub::Sum());
-        w_sum = BlockReduce(w_storage).Reduce(w, cub::Sum());
+        ws_sum = BlockReduce(ws_storage).Reduce(v * w, thrust::plus<T>());
+        w_sum = BlockReduce(w_storage).Reduce(w, thrust::plus<T>());
     }
     if (l_ijk == Coord(0, 0, 0)) {
         //if (order == -1) printf("block %d ws_sum %f w_sum %f v %f\n", blockIdx.x, ws_sum, w_sum, v);
@@ -1070,7 +1070,7 @@ __global__ void MarkInterestAreaWithValue128Kernel(HATileAccessor<PoissonTile<T>
 
     typedef cub::BlockReduce<T, 128> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
-    T block_max = BlockReduce(temp_storage).Reduce(max_data, cub::Max());
+    T block_max = BlockReduce(temp_storage).Reduce(max_data, thrust::maximum<T>());
 
     if (ti == 0) {
         if (block_max > threshold) {

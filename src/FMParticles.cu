@@ -193,8 +193,8 @@ __global__ void MarkInterestAreaKernel(HATileAccessor<PoissonTile<T>> acc, HATil
 	__shared__ typename BlockReduce::TempStorage temp_storage_min;
 	__shared__ typename BlockReduce::TempStorage temp_storage_max;
 
-	T minValue = BlockReduce(temp_storage_min).Reduce(value, cub::Min());
-	T maxValue = BlockReduce(temp_storage_max).Reduce(value, cub::Max());
+	T minValue = BlockReduce(temp_storage_min).Reduce(value, thrust::minimum<T>());
+	T maxValue = BlockReduce(temp_storage_max).Reduce(value, thrust::maximum<T>());
 
 	if (l_ijk == Coord(0, 0, 0)) {
 		auto& tile = info.tile();
