@@ -38,3 +38,17 @@ target("cirrus")
     --add_packages("polyscope", {public = true})
 
     add_deps("common")
+
+    after_build(function (target)
+        local userprofile = os.getenv("USERPROFILE")
+        local pkgdir = path.join(userprofile, "AppData/Local/.xmake/packages")
+
+        local pattern = path.join(pkgdir, "t/token/24.09.0", "*", "bin", "token.dll")
+
+        local outdir = target:targetdir()
+        os.mkdir(outdir)
+
+        for _, dll in ipairs(os.files(pattern)) do
+            os.cp(dll, outdir)
+        end
+    end)

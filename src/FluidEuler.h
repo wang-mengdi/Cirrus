@@ -11,7 +11,7 @@
 #include "GPUTimer.h"
 #include "PoissonSolver.h"
 
-//#include "AMGSolver.h"
+#include "AMGSolver.h"
 #include "PoissonIOFunc.h"
 #include "FMParticles.h"
 
@@ -588,9 +588,9 @@ public:
 		//GMGSolver solver;
 
 		CalculateNeighborTiles(grid);
-		GMGSolver solver(1., 1.);
-		//AMGSolver solver(Tile::c0_channel, 1., 1.);
-		//solver.prepareTypesAndCoeffs(grid);
+		//GMGSolver solver(1., 1.);
+		AMGSolver solver(Tile::c0_channel, 1., 1.);
+		solver.prepareTypesAndCoeffs(grid);
 
 		CPUTimer timer;
 		timer.start();

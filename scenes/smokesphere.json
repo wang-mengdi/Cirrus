@@ -2,8 +2,8 @@
     "driver": {
         "cfl": 0.5,
         "first_frame": 0,
-        "fps": 200,
-        "last_frame": 100,
+        "fps": 24,
+        "last_frame": 120,
         "min_step_frame_fraction": 0.0,
         "output_base_dir": "./output/smokesphere",
         "queue_size": 10,
