@@ -2,7 +2,7 @@
     "driver": {
         "cfl": 0.5,
         "first_frame": 0,
-        "fps": 12,
+        "fps": 24,
         "last_frame": 120,
         "min_step_frame_fraction": 0.0,
         "output_base_dir": "./output/smokesphere",
@@ -15,7 +15,7 @@
         "flowmap_stride": 5,
         "refine_threshold": 0.1,
         "gravity": 0.0,
-        "particle_life": 0.5,
+        "particle_life": 0.25,
         "test": "smokesphere",
         "sdf_isovalue": 0.025,
         "reserve_particles_m": 20
