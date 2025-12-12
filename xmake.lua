@@ -8,7 +8,7 @@ includes("./common/xmake.lua")
 
 add_requires("eigen >=3.4.0")
 --add_requires("cuda")
-add_requires("vtk >=9.5.1", {configs = {cuda = true}})
+--add_requires("vtk >=9.5.1", {configs = {cuda = true}})
 --add_requires("vtk =9.3.1", {configs = {cuda = true}})
 --add_requires("stb")
 add_requires("polyscope =2.3")
@@ -33,7 +33,7 @@ target("cirrus")
 
     --add_packages("cuda", {public = true})
     add_packages("eigen", {public = true})
-    add_packages("vtk", {public = true})
+    --add_packages("vtk", {public = true})
     --add_packages("stb", {public = true})
     --add_packages("polyscope", {public = true})
 

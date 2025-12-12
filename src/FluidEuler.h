@@ -14,7 +14,7 @@
 #include "AMGSolver.h"
 #include "PoissonIOFunc.h"
 #include "FMParticles.h"
-
+#include "BinaryIO.h"
 
 #include <sys/types.h>
 
@@ -535,13 +535,21 @@ public:
 			//metadata.Append_Output_Thread(std::make_shared<std::thread>(IOFunc::OutputTilesAsVTU, holder, metadata.base_path / fmt::format("tiles{:04d}.vtu", metadata.current_frame)));
 			//IOFunc::OutputTilesAsVTU(holder, metadata.base_path / fmt::format("tiles{:04d}.vtu", metadata.current_frame));
 
-			metadata.Append_Output_Thread(std::make_shared<std::thread>(IOFunc::OutputPoissonGridAsStructuredVTI, holder,
-				std::vector<std::pair<int, std::string>>{ {-1,"type"}, { -2, "level" }, {Tile::vor_channel, "vorticity"}},
+			//metadata.Append_Output_Thread(std::make_shared<std::thread>(IOFunc::OutputPoissonGridAsStructuredVTI, holder,
+			//	std::vector<std::pair<int, std::string>>{ {-1,"type"}, { -2, "level" }, {Tile::vor_channel, "vorticity"}},
+			//	//std::vector<std::pair<int, std::string>>{ },
+			//	std::vector<std::pair<int, std::string>>{ {cell_center_vel_channel, "velocity"} },
+			//	//std::vector<std::pair<int, std::string>>{ { -1, "type" }, { Tile::vor_channel, "vorticity" }, { Tile::dye_channel, "dye_density" } },
+			//	//std::vector<std::pair<int, std::string>>{ {Tile::u_channel, "velocity"} },
+			//	metadata.base_path / fmt::format("fluid{:04d}.vti", metadata.current_frame)));
+
+			metadata.Append_Output_Thread(std::make_shared<std::thread>(BinaryIO::OutputPoissonGridAsJsonAndBin, holder,
+				std::vector<std::pair<int, std::string>>{ {-1, "type"}, { -2, "level" }, { Tile::vor_channel, "vorticity" }},
 				//std::vector<std::pair<int, std::string>>{ },
 				std::vector<std::pair<int, std::string>>{ {cell_center_vel_channel, "velocity"} },
 				//std::vector<std::pair<int, std::string>>{ { -1, "type" }, { Tile::vor_channel, "vorticity" }, { Tile::dye_channel, "dye_density" } },
 				//std::vector<std::pair<int, std::string>>{ {Tile::u_channel, "velocity"} },
-				metadata.base_path / fmt::format("fluid{:04d}.vti", metadata.current_frame)));
+				metadata.base_path / fmt::format("frame{:04d}.json", metadata.current_frame)));
 
 		}
 
