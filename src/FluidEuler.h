@@ -7,6 +7,7 @@
 
 #include <sys/types.h>
 #include <fstream>
+#include <fmt/ostream.h>
 
 #ifdef _WIN32
 #include <windows.h>
