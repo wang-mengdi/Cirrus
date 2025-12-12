@@ -65,7 +65,7 @@ public:
 	//Vec smokesphere_source = Vec(1.0, 0., 0.);
 	//Vec smokesphere_source = Vec(0., 0., 0.4);
 
-	Vec smokesphere_source = Vec(0., 0., 0.2);
+	Vec smokesphere_source = Vec(0., 0., 0.4);
 
 	Vec smokesphere_center = Vec(0.5, 0.5, 0.3);
 	//Vec smokesphere_center = Vec(0.5, 0.5, 0.7);

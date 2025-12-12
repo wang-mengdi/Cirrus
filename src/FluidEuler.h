@@ -5,6 +5,15 @@
 //////////////////////////////////////////////////////////////////////////
 #pragma once
 
+#include <sys/types.h>
+#include <fstream>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/sysinfo.h>
+#endif
+
 #include "Simulator.h"
 #include "FluidParams.h"
 //#include "Random.h"
@@ -16,13 +25,7 @@
 #include "FMParticles.h"
 #include "BinaryIO.h"
 
-#include <sys/types.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/sysinfo.h>
-#endif
 
 template<class FuncV>
 __global__ void MarkInterestAreaWithPointFunction128Kernel(FuncV point_func, HATileAccessor<PoissonTile<T>> acc, HATileInfo<PoissonTile<T>>* infos, T threshold, int subtree_level, uint8_t launch_types) {
