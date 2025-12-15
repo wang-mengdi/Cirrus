@@ -4,60 +4,98 @@
 
 #include <fmt/core.h>
 
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
-#  include <windows.h>
-#endif
+#include <nlohmann/json.hpp>
+
+
+namespace fs = std::filesystem;
+using json = nlohmann::json;
 
 using namespace Alembic::Abc;
 using namespace Alembic::AbcGeom;
 
-// ------------------------------------------------------------
-// Tiny arg parser (keeps deps minimal)
-// ------------------------------------------------------------
-static const char* get_arg(int argc, char** argv, const char* key, const char* defval = nullptr)
-{
+static const char* get_arg(int argc, char** argv, const char* key, const char* defval = nullptr) {
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::string(argv[i]) == key) return argv[i + 1];
     }
     return defval;
 }
 
-static int get_arg_int(int argc, char** argv, const char* key, int defval)
-{
-    const char* v = get_arg(argc, argv, key, nullptr);
-    return v ? std::atoi(v) : defval;
+struct DriverConfig {
+    int first_frame = 0;
+    int last_frame = 0;
+    int fps = 24;
+    fs::path output_base_dir;
+};
+
+static DriverConfig load_driver_config(const fs::path& input_dir) {
+    fs::path cfg_path = input_dir / "config.json";
+    std::ifstream fin(cfg_path);
+    if (!fin) {
+        throw std::runtime_error("Cannot open config.json: " + cfg_path.string());
+    }
+
+    json j;
+    fin >> j;
+
+    DriverConfig cfg;
+
+    auto& d = j.at("driver");
+
+    cfg.first_frame = d.value("first_frame", 0);
+    cfg.last_frame = d.value("last_frame", cfg.first_frame);
+    cfg.fps = d.value("fps", 24);
+	cfg.output_base_dir = input_dir;
+
+    cfg.fps = std::max(1, cfg.fps);
+    if (cfg.last_frame < cfg.first_frame) std::swap(cfg.first_frame, cfg.last_frame);
+
+    return cfg;
 }
 
-static double get_arg_double(int argc, char** argv, const char* key, double defval)
-{
-    const char* v = get_arg(argc, argv, key, nullptr);
-    return v ? std::atof(v) : defval;
-}
 
 // ------------------------------------------------------------
 // Main
 // ------------------------------------------------------------
 int main(int argc, char** argv)
 {
+    // ================================
+    // Only argument: --input_dir
+    // ================================
+    const char* input_dir_c = get_arg(argc, argv, "--input_dir", nullptr);
+    if (!input_dir_c) {
+		fmt::print("Usage: {} --input_dir <input_directory>\n", argv[0]);
+        return 1;
+    }
+    fs::path input_dir(input_dir_c);
 
-    const char* out_path = get_arg(argc, argv, "--out", "smoke_particles.abc");
-    const int   frames = std::max(1, get_arg_int(argc, argv, "--frames", 120));
-    const int   fps = std::max(1, get_arg_int(argc, argv, "--fps", 24));
-    const int   npts = std::max(1, get_arg_int(argc, argv, "--n", 200000));
+    DriverConfig dc = load_driver_config(input_dir);
+    const int first_frame = dc.first_frame;
+    const int last_frame = dc.last_frame;
+    const int fps = dc.fps;
 
-    fmt::print("Writing Alembic:\n  out    = {}\n  frames = {}\n  fps    = {}\n  npts   = {}\n",
-        out_path, frames, fps, npts);
+    const int frames = (last_frame - first_frame + 1);
+
+    fs::path out_path = dc.output_base_dir / "cpp_smoke_particles.abc";
+
+    constexpr int kNumParticles = 200000;
+    const int npts = kNumParticles;
+
+
 
     // --------------------------------------------------------
     // 1) Create Alembic archive (Ogawa)
     // --------------------------------------------------------
-    OArchive archive(Alembic::AbcCoreOgawa::WriteArchive(), out_path);
+    OArchive archive(Alembic::AbcCoreOgawa::WriteArchive(), out_path.string());
     OObject  top_obj = archive.getTop();
 
     // --------------------------------------------------------
@@ -132,6 +170,6 @@ int main(int argc, char** argv)
         }
     }
 
-    fmt::print("Done. Wrote: {}\n", out_path);
+    fmt::print("Done. Wrote: {}\n", out_path.string());
     return 0;
 }
