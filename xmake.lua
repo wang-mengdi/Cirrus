@@ -19,6 +19,9 @@ add_defines("FMT_UNICODE=0")
 
 set_rundir("$(projectdir)")
 
+includes("./smoke_adv/xmake.lua")
+
+
 target("cirrus")
     set_kind("binary")
     add_headerfiles("src/*.h", "ext/*.h")
