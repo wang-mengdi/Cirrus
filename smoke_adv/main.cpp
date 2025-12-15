@@ -1,21 +1,27 @@
 // smoke_adv/main.cpp
+// ------------------------------------------------------------
+// Simple particle advection tool for smoke visualization.
+// - Reads velocity fields from json + binary files
+// - Spawns passive particles every frame
+// - Advects all particles using RK4 with temporal interpolation
+// - Writes particle positions to Alembic (.abc)
+// ------------------------------------------------------------
+
 #include <Alembic/AbcCoreOgawa/All.h>
 #include <Alembic/AbcGeom/All.h>
 
 #include <fmt/core.h>
+#include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cstdint>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <string>
-#include <algorithm>
-#include <cstdint>
-#include <cstdlib>
+#include <stdexcept>
 #include <string>
 #include <vector>
-
-#include <nlohmann/json.hpp>
-
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -23,13 +29,23 @@ using json = nlohmann::json;
 using namespace Alembic::Abc;
 using namespace Alembic::AbcGeom;
 
-static const char* get_arg(int argc, char** argv, const char* key, const char* defval = nullptr) {
+// ------------------------------------------------------------
+// Minimal command-line argument helper
+// ------------------------------------------------------------
+static const char* get_arg(int argc, char** argv,
+    const char* key,
+    const char* defval = nullptr)
+{
     for (int i = 1; i + 1 < argc; ++i) {
-        if (std::string(argv[i]) == key) return argv[i + 1];
+        if (std::string(argv[i]) == key)
+            return argv[i + 1];
     }
     return defval;
 }
 
+// ------------------------------------------------------------
+// Driver configuration (loaded from input_dir/config.json)
+// ------------------------------------------------------------
 struct DriverConfig {
     int first_frame = 0;
     int last_frame = 0;
@@ -37,139 +53,345 @@ struct DriverConfig {
     fs::path output_base_dir;
 };
 
-static DriverConfig load_driver_config(const fs::path& input_dir) {
+// Load simulation driver parameters from config.json.
+// Only a small subset is required for particle advection.
+static DriverConfig load_driver_config(const fs::path& input_dir)
+{
     fs::path cfg_path = input_dir / "config.json";
     std::ifstream fin(cfg_path);
     if (!fin) {
-        throw std::runtime_error("Cannot open config.json: " + cfg_path.string());
+        throw std::runtime_error("Cannot open config.json: " +
+            cfg_path.string());
     }
 
     json j;
     fin >> j;
 
     DriverConfig cfg;
-
     auto& d = j.at("driver");
 
     cfg.first_frame = d.value("first_frame", 0);
     cfg.last_frame = d.value("last_frame", cfg.first_frame);
     cfg.fps = d.value("fps", 24);
-	cfg.output_base_dir = input_dir;
+    cfg.output_base_dir = input_dir;
 
     cfg.fps = std::max(1, cfg.fps);
-    if (cfg.last_frame < cfg.first_frame) std::swap(cfg.first_frame, cfg.last_frame);
+    if (cfg.last_frame < cfg.first_frame)
+        std::swap(cfg.first_frame, cfg.last_frame);
 
     return cfg;
 }
 
+// ------------------------------------------------------------
+// Lightweight deterministic RNG (LCG)
+// ------------------------------------------------------------
+// Used only for particle spawning. Deterministic across runs.
+struct LCG {
+    uint32_t state = 1u;
+    explicit LCG(uint32_t seed = 1u) : state(seed) {}
+
+    uint32_t next_u32() {
+        state = 1664525u * state + 1013904223u;
+        return state;
+    }
+
+    // Returns a float in [0,1)
+    float next_f01() {
+        return (next_u32() >> 8) * (1.0f / 16777216.0f);
+    }
+};
+
+// ------------------------------------------------------------
+// Velocity field loading (json + binary)
+// Layout assumptions:
+//   - float32
+//   - AoS (vx, vy, vz)
+//   - z_fastest indexing
+// ------------------------------------------------------------
+struct GridMeta {
+    int   nx = 0, ny = 0, nz = 0;
+    float origin[3] = { 0, 0, 0 };
+    float spacing[3] = { 1, 1, 1 };
+};
+
+struct VelocityField {
+    GridMeta meta;
+    std::vector<float> v; // size = nx * ny * nz * 3
+
+    bool valid() const {
+        return meta.nx > 1 && meta.ny > 1 && meta.nz > 1 &&
+            (int)v.size() == meta.nx * meta.ny * meta.nz * 3;
+    }
+};
+
+// Load one frame of velocity data from a json description
+// and its associated binary file.
+static VelocityField load_velocity_frame(const fs::path& frame_json_path)
+{
+    std::ifstream fin(frame_json_path);
+    if (!fin)
+        throw std::runtime_error("Cannot open frame json: " +
+            frame_json_path.string());
+
+    json j;
+    fin >> j;
+
+    VelocityField out;
+
+    // Grid metadata
+    auto& g = j.at("grid");
+    auto dims = g.at("dimensions");
+    out.meta.nx = dims.at(0).get<int>();
+    out.meta.ny = dims.at(1).get<int>();
+    out.meta.nz = dims.at(2).get<int>();
+
+    auto org = g.at("origin");
+    for (int i = 0; i < 3; ++i)
+        out.meta.origin[i] = org.at(i).get<float>();
+
+    auto sp = g.at("spacing");
+    for (int i = 0; i < 3; ++i)
+        out.meta.spacing[i] = sp.at(i).get<float>();
+
+    // Validate layout assumptions
+    auto& layout = j.at("layout");
+    if (layout.value("dtype", "") != "float32" ||
+        layout.value("components_order", "") != "AoS" ||
+        layout.value("index_order", "") != "z_fastest")
+    {
+        throw std::runtime_error("Unsupported layout in " +
+            frame_json_path.string());
+    }
+
+    // Locate velocity channel
+    uint64_t offset_bytes = 0;
+    uint64_t bytes = 0;
+    bool found = false;
+
+    for (auto& ch : j.at("channels")) {
+        if (ch.value("name", "") == "velocity") {
+            offset_bytes = ch.at("offset_bytes").get<uint64_t>();
+            bytes = ch.at("bytes").get<uint64_t>();
+            if (ch.at("components").get<int>() != 3)
+                throw std::runtime_error("Velocity must have 3 components");
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+        throw std::runtime_error("Velocity channel not found");
+
+    const uint64_t expected_bytes =
+        uint64_t(out.meta.nx) * out.meta.ny * out.meta.nz * 3ull * 4ull;
+    if (bytes != expected_bytes)
+        throw std::runtime_error("Velocity byte size mismatch");
+
+    // Read binary data
+    fs::path bin_path =
+        frame_json_path.parent_path() /
+        j.at("binary_file").get<std::string>();
+
+    std::ifstream fb(bin_path, std::ios::binary);
+    if (!fb)
+        throw std::runtime_error("Cannot open binary file: " +
+            bin_path.string());
+
+    fb.seekg((std::streamoff)offset_bytes, std::ios::beg);
+    out.v.resize(expected_bytes / 4ull);
+    fb.read(reinterpret_cast<char*>(out.v.data()),
+        (std::streamsize)expected_bytes);
+
+    if (!out.valid())
+        throw std::runtime_error("Invalid velocity field");
+
+    return out;
+}
+
+// ------------------------------------------------------------
+// Trilinear interpolation utilities
+// ------------------------------------------------------------
+
+// AoS indexing with z-fastest layout
+static inline size_t v_index(const GridMeta& m,
+    int x, int y, int z, int c)
+{
+    return ((((size_t)x * m.ny + y) * m.nz + z) * 3u + c);
+}
+
+// Trilinear sampling of velocity field in world space
+static inline V3f sample_velocity_trilerp(const VelocityField& vf,
+    const V3f& p)
+{
+    const GridMeta& m = vf.meta;
+
+    float gx = (p.x - m.origin[0]) / m.spacing[0];
+    float gy = (p.y - m.origin[1]) / m.spacing[1];
+    float gz = (p.z - m.origin[2]) / m.spacing[2];
+
+    gx = std::clamp(gx, 0.0f, float(m.nx - 1) - 1e-6f);
+    gy = std::clamp(gy, 0.0f, float(m.ny - 1) - 1e-6f);
+    gz = std::clamp(gz, 0.0f, float(m.nz - 1) - 1e-6f);
+
+    int x0 = std::min(int(std::floor(gx)), m.nx - 2);
+    int y0 = std::min(int(std::floor(gy)), m.ny - 2);
+    int z0 = std::min(int(std::floor(gz)), m.nz - 2);
+
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+    int z1 = z0 + 1;
+
+    float tx = gx - x0;
+    float ty = gy - y0;
+    float tz = gz - z0;
+
+    auto getV = [&](int xi, int yi, int zi) {
+        size_t i0 = v_index(m, xi, yi, zi, 0);
+        return V3f(vf.v[i0], vf.v[i0 + 1], vf.v[i0 + 2]);
+        };
+
+    auto lerp = [](const V3f& a, const V3f& b, float t) {
+        return a * (1.0f - t) + b * t;
+        };
+
+    V3f c00 = lerp(getV(x0, y0, z0), getV(x1, y0, z0), tx);
+    V3f c10 = lerp(getV(x0, y1, z0), getV(x1, y1, z0), tx);
+    V3f c01 = lerp(getV(x0, y0, z1), getV(x1, y0, z1), tx);
+    V3f c11 = lerp(getV(x0, y1, z1), getV(x1, y1, z1), tx);
+
+    V3f c0 = lerp(c00, c10, ty);
+    V3f c1 = lerp(c01, c11, ty);
+
+    return lerp(c0, c1, tz);
+}
+
+// Velocity with temporal interpolation between two frames
+static inline V3f velocity_at(const VelocityField& v0,
+    const VelocityField& v1,
+    const V3f& p,
+    float alpha)
+{
+    return sample_velocity_trilerp(v0, p) * (1.0f - alpha) +
+        sample_velocity_trilerp(v1, p) * alpha;
+}
+
+// One RK4 integration step over dt
+static inline V3f rk4_step(const VelocityField& v0,
+    const VelocityField& v1,
+    const V3f& p,
+    float dt)
+{
+    const float half_dt = 0.5f * dt;
+    const float inv6_dt = dt / 6.0f;
+
+    V3f k1 = velocity_at(v0, v1, p, 0.0f);
+    V3f k2 = velocity_at(v0, v1, p + k1 * half_dt, 0.5f);
+    V3f k3 = velocity_at(v0, v1, p + k2 * half_dt, 0.5f);
+    V3f k4 = velocity_at(v0, v1, p + k3 * dt, 1.0f);
+
+    return p + (k1 + k2 * 2.0f + k3 * 2.0f + k4) * inv6_dt;
+}
+
+
+// ------------------------------------------------------------
+// Global simulation constants (tune later)
+// ------------------------------------------------------------
+static constexpr int   kSpawnPerFrame = 20000;
+static constexpr float kLifeSeconds = 0.5f;
+static constexpr float kZClamp = 1.0f;
+
+static const V3f kSourceCenter(0.5f, 0.5f, 0.18f);
+static const V3f kSourceBox(0.02f, 0.02f, 0.02f);
 
 // ------------------------------------------------------------
 // Main
 // ------------------------------------------------------------
 int main(int argc, char** argv)
 {
-    // ================================
-    // Only argument: --input_dir
-    // ================================
     const char* input_dir_c = get_arg(argc, argv, "--input_dir", nullptr);
     if (!input_dir_c) {
-		fmt::print("Usage: {} --input_dir <input_directory>\n", argv[0]);
+        fmt::print("Usage: {} --input_dir <directory>\n", argv[0]);
         return 1;
     }
+
     fs::path input_dir(input_dir_c);
+    DriverConfig cfg = load_driver_config(input_dir);
 
-    DriverConfig dc = load_driver_config(input_dir);
-    const int first_frame = dc.first_frame;
-    const int last_frame = dc.last_frame;
-    const int fps = dc.fps;
+    const int first = cfg.first_frame;
+    const int last = cfg.last_frame;
+    const int fps = cfg.fps;
+    const float dt = 1.0f / float(fps);
 
-    const int frames = (last_frame - first_frame + 1);
+    fs::path out_path = cfg.output_base_dir / "smoke_particles.abc";
 
-    fs::path out_path = dc.output_base_dir / "cpp_smoke_particles.abc";
+    // Create Alembic archive
+    OArchive archive(Alembic::AbcCoreOgawa::WriteArchive(),
+        out_path.string());
+    OObject top = archive.getTop();
 
-    constexpr int kNumParticles = 200000;
-    const int npts = kNumParticles;
+    TimeSamplingPtr ts(new TimeSampling(1.0 / fps, 0.0));
+    uint32_t ts_idx = archive.addTimeSampling(*ts);
 
+    OPoints points(top, "particles");
+    auto& schema = points.getSchema();
+    schema.setTimeSampling(ts_idx);
 
+    std::vector<uint64_t> ids;
+    std::vector<V3f>      positions;
+    std::vector<float>    birth_time;
 
-    // --------------------------------------------------------
-    // 1) Create Alembic archive (Ogawa)
-    // --------------------------------------------------------
-    OArchive archive(Alembic::AbcCoreOgawa::WriteArchive(), out_path.string());
-    OObject  top_obj = archive.getTop();
+    uint64_t next_id = 0;
+    LCG rng(1234);
 
-    // --------------------------------------------------------
-    // 2) Create OPoints schema with time sampling
-    // --------------------------------------------------------
-    // dt = 1/fps, start time = 0
-    TimeSamplingPtr ts(new TimeSampling(1.0 / double(fps), 0.0));
-    const uint32_t ts_index = archive.addTimeSampling(*ts);
+    // Main simulation loop
+    for (int f = first; f <= last; ++f) {
+        float t = (f - first) * dt;
 
-    OPoints points_obj(top_obj, "particles");
-    OPointsSchema& schema = points_obj.getSchema();
-    schema.setTimeSampling(ts_index);
-
-    // Optional: set some stable per-particle IDs
-    std::vector<uint64_t> ids((size_t)npts);
-    for (int i = 0; i < npts; ++i) ids[(size_t)i] = (uint64_t)i;
-
-    // Initialize positions (in some small box)
-    std::vector<V3f> pos((size_t)npts);
-    for (int i = 0; i < npts; ++i) {
-        // deterministic-ish random without <random>
-        const float fx = float((i * 16807u) % 10000u) / 10000.0f;
-        const float fy = float((i * 48271u) % 10000u) / 10000.0f;
-        const float fz = float((i * 69621u) % 10000u) / 10000.0f;
-        pos[(size_t)i] = V3f(
-            0.45f + 0.10f * (fx - 0.5f),
-            0.50f + 0.10f * (fy - 0.5f),
-            0.18f + 0.10f * (fz - 0.5f)
-        );
-    }
-
-    // --------------------------------------------------------
-    // 3) Write frames
-    //    (Replace this motion with your RK4 advection later.)
-    // --------------------------------------------------------
-    for (int f = 0; f < frames; ++f) {
-        const float t = float(f) / float(fps);
-
-        // Simple swirling motion around center (0.5, 0.5, 0.2)
-        const V3f center(0.5f, 0.5f, 0.2f);
-        const float ang = 1.0f * t;          // radians/sec
-        const float cs = std::cos(ang);
-        const float sn = std::sin(ang);
-
-        for (int i = 0; i < npts; ++i) {
-            V3f p = pos[(size_t)i] - center;
-
-            // rotate in XY plane
-            V3f pr;
-            pr.x = cs * p.x - sn * p.y;
-            pr.y = sn * p.x + cs * p.y;
-            pr.z = p.z;
-
-            // add a tiny vertical wobble
-            pr.z += 0.01f * std::sin(2.0f * t + 0.001f * float(i));
-
-            pos[(size_t)i] = pr + center;
+        // Spawn new particles
+        for (int i = 0; i < kSpawnPerFrame; ++i) {
+            V3f jitter(
+                (rng.next_f01() - 0.5f) * kSourceBox.x,
+                (rng.next_f01() - 0.5f) * kSourceBox.y,
+                (rng.next_f01() - 0.5f) * kSourceBox.z
+            );
+            positions.push_back(kSourceCenter + jitter);
+            ids.push_back(next_id++);
+            birth_time.push_back(t);
         }
 
-        // Fill Alembic sample
-        Alembic::AbcGeom::V3fArraySample positions_sample(pos.data(), (size_t)npts);
-        Alembic::AbcGeom::UInt64ArraySample id_sample(ids.data(), (size_t)npts);
-
-        Alembic::AbcGeom::OPointsSchema::Sample sample;
-        sample.setPositions(positions_sample);
-        sample.setIds(id_sample);
-
-        schema.set(sample);
-
-        if ((f % std::max(1, frames / 10)) == 0) {
-            fmt::print("  frame {}/{}\n", f, frames - 1);
+        // Remove dead or out-of-range particles
+        size_t w = 0;
+        for (size_t i = 0; i < positions.size(); ++i) {
+            if ((t - birth_time[i]) <= kLifeSeconds &&
+                positions[i].z <= kZClamp)
+            {
+                positions[w] = positions[i];
+                ids[w] = ids[i];
+                birth_time[w] = birth_time[i];
+                ++w;
+            }
         }
+        positions.resize(w);
+        ids.resize(w);
+        birth_time.resize(w);
+
+        // Load velocity fields
+        auto v0 = load_velocity_frame(
+            input_dir / fmt::format("frame{:04d}.json", f));
+        auto v1 = load_velocity_frame(
+            input_dir / fmt::format("frame{:04d}.json",
+                std::min(f + 1, last)));
+
+        // Advect particles
+        for (auto& p : positions)
+            p = rk4_step(v0, v1, p, dt);
+
+        // Write Alembic sample
+        schema.set(OPointsSchema::Sample(
+            V3fArraySample(positions),
+            UInt64ArraySample(ids)
+        ));
     }
 
-    fmt::print("Done. Wrote: {}\n", out_path.string());
+    fmt::print("Finished writing {}\n", out_path.string());
     return 0;
 }
