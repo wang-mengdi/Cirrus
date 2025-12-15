@@ -1,7 +1,8 @@
 import os, json, argparse
 import numpy as np
-
+import sys
 import bpy
+import time
 
 # ============================================================
 # Global constants (edit here)
@@ -21,6 +22,7 @@ RNG_SEED = 1
 SOURCE_CENTER = np.array([0.5, 0.5, 0.18], dtype=np.float32)
 SOURCE_BOX    = np.array([0.01, 0.01, 0.01], dtype=np.float32)
 EMIT_PER_FRAME = 2000  # 0 to disable
+#EMIT_PER_FRAME = 1  # 0 to disable
 
 # Advection settings
 SUBSTEPS = 10
@@ -80,16 +82,8 @@ def load_channel_as_numpy(meta: dict, json_path: str, channel_name: str):
     spacing = np.array(grid["spacing"], dtype=np.float32)
     return out, origin, spacing
 
-# ============================================================
-# Trilinear interpolation (vectorized)
-# ============================================================
-def sample_velocity_trilerp(v: np.ndarray, origin: np.ndarray, spacing: np.ndarray, p: np.ndarray):
-    """
-    v: (nx, ny, nz, 3) float32
-    p: (N, 3) world positions
-    returns: (N, 3)
-    """
-    nx, ny, nz, _ = v.shape
+def sample_velocity_trilerp_two(v0, v1, origin, spacing, p, alpha):
+    nx, ny, nz, _ = v0.shape
     g = (p - origin[None, :]) / spacing[None, :]
     gx, gy, gz = g[:, 0], g[:, 1], g[:, 2]
 
@@ -97,45 +91,51 @@ def sample_velocity_trilerp(v: np.ndarray, origin: np.ndarray, spacing: np.ndarr
     y0 = np.clip(np.floor(gy).astype(np.int32), 0, ny - 2)
     z0 = np.clip(np.floor(gz).astype(np.int32), 0, nz - 2)
 
-    tx = (gx - x0).astype(np.float32)
-    ty = (gy - y0).astype(np.float32)
-    tz = (gz - z0).astype(np.float32)
+    tx = (gx - x0).astype(np.float32)[:, None]
+    ty = (gy - y0).astype(np.float32)[:, None]
+    tz = (gz - z0).astype(np.float32)[:, None]
 
-    x1 = x0 + 1
-    y1 = y0 + 1
-    z1 = z0 + 1
+    x1 = x0 + 1; y1 = y0 + 1; z1 = z0 + 1
 
-    c000 = v[x0, y0, z0]
-    c100 = v[x1, y0, z0]
-    c010 = v[x0, y1, z0]
-    c110 = v[x1, y1, z0]
-    c001 = v[x0, y0, z1]
-    c101 = v[x1, y0, z1]
-    c011 = v[x0, y1, z1]
-    c111 = v[x1, y1, z1]
+    # v0 corners
+    c0000 = v0[x0, y0, z0]; c1000 = v0[x1, y0, z0]
+    c0100 = v0[x0, y1, z0]; c1100 = v0[x1, y1, z0]
+    c0010 = v0[x0, y0, z1]; c1010 = v0[x1, y0, z1]
+    c0110 = v0[x0, y1, z1]; c1110 = v0[x1, y1, z1]
 
-    tx = tx[:, None]; ty = ty[:, None]; tz = tz[:, None]
-    c00 = c000 * (1 - tx) + c100 * tx
-    c10 = c010 * (1 - tx) + c110 * tx
-    c01 = c001 * (1 - tx) + c101 * tx
-    c11 = c011 * (1 - tx) + c111 * tx
-    c0 = c00 * (1 - ty) + c10 * ty
-    c1 = c01 * (1 - ty) + c11 * ty
-    return c0 * (1 - tz) + c1 * tz
+    # v1 corners
+    c0001 = v1[x0, y0, z0]; c1001 = v1[x1, y0, z0]
+    c0101 = v1[x0, y1, z0]; c1101 = v1[x1, y1, z0]
+    c0011 = v1[x0, y0, z1]; c1011 = v1[x1, y0, z1]
+    c0111 = v1[x0, y1, z1]; c1111 = v1[x1, y1, z1]
+
+    def trilerp(c000, c100, c010, c110, c001, c101, c011, c111):
+        c00 = c000 * (1 - tx) + c100 * tx
+        c10 = c010 * (1 - tx) + c110 * tx
+        c01 = c001 * (1 - tx) + c101 * tx
+        c11 = c011 * (1 - tx) + c111 * tx
+        c0 = c00 * (1 - ty) + c10 * ty
+        c1 = c01 * (1 - ty) + c11 * ty
+        return c0 * (1 - tz) + c1 * tz
+
+    v0i = trilerp(c0000,c1000,c0100,c1100,c0010,c1010,c0110,c1110)
+    v1i = trilerp(c0001,c1001,c0101,c1101,c0011,c1011,c0111,c1111)
+
+    a = np.float32(alpha)
+    return v0i * (1.0 - a) + v1i * a
+
 
 # ============================================================
 # RK4 advection with time interpolation between frames
 # ============================================================
 def rk4_step(p, dt, v0, v1, origin, spacing, alpha0, alpha1):
-    def vel_at(pos, alpha):
-        vv = v0 * (1.0 - alpha) + v1 * alpha
-        return sample_velocity_trilerp(vv, origin, spacing, pos)
-
-    k1 = vel_at(p, alpha0)
-    k2 = vel_at(p + 0.5 * dt * k1, 0.5 * (alpha0 + alpha1))
-    k3 = vel_at(p + 0.5 * dt * k2, 0.5 * (alpha0 + alpha1))
-    k4 = vel_at(p + 1.0 * dt * k3, alpha1)
+    amid = 0.5 * (alpha0 + alpha1)
+    k1 = sample_velocity_trilerp_two(v0, v1, origin, spacing, p, alpha0)
+    k2 = sample_velocity_trilerp_two(v0, v1, origin, spacing, p + 0.5*dt*k1, amid)
+    k3 = sample_velocity_trilerp_two(v0, v1, origin, spacing, p + 0.5*dt*k2, amid)
+    k4 = sample_velocity_trilerp_two(v0, v1, origin, spacing, p + 1.0*dt*k3, alpha1)
     return p + (dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
+
 
 # ============================================================
 # Blender helpers: point mesh + shapekeys
@@ -167,13 +167,19 @@ def set_shape_key_positions(obj, key_name: str, positions: np.ndarray):
             other.value = 0.0
             other.keyframe_insert(data_path="value")
 
+def get_blender_args():
+    if "--" not in sys.argv:
+        return []
+    return sys.argv[sys.argv.index("--") + 1:]
+
 # ============================================================
 # Main
 # ============================================================
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--input_dir", required=True)
-    args, _ = ap.parse_known_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_dir", required=True)
+
+    args = parser.parse_args(get_blender_args())
 
     input_dir = args.input_dir
     cfg_path = os.path.join(input_dir, "config.json")
@@ -233,6 +239,8 @@ def main():
     emit(EMIT_PER_FRAME)
 
     for i in range(first_frame, last_frame + 1):
+        start_time = time.time()
+        print(f"=== Frame {i} ===")
         scene.frame_set(i)
 
         meta_i = read_json(frame_json_path(input_dir, i))
@@ -264,6 +272,8 @@ def main():
         set_shape_key_positions(obj, key_name, P)
 
         print(f"[frame {i}] alive={alive}")
+        end_time = time.time()
+        print(f"  time: {end_time - start_time:.3f} sec")
 
     bpy.ops.wm.alembic_export(
         filepath=out_abc,
