@@ -13,6 +13,10 @@
 #include <fmt/core.h>
 #include <nlohmann/json.hpp>
 
+#include <tbb/parallel_for_each.h>
+#include <chrono>
+
+
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
@@ -28,6 +32,9 @@ using json = nlohmann::json;
 
 using namespace Alembic::Abc;
 using namespace Alembic::AbcGeom;
+
+using Clock = std::chrono::high_resolution_clock;
+
 
 // ------------------------------------------------------------
 // Minimal command-line argument helper
@@ -344,6 +351,8 @@ int main(int argc, char** argv)
 
     // Main simulation loop
     for (int f = first; f <= last; ++f) {
+        auto frame_begin = Clock::now();
+
         float t = (f - first) * dt;
 
         // Spawn new particles
@@ -381,15 +390,30 @@ int main(int argc, char** argv)
             input_dir / fmt::format("frame{:04d}.json",
                 std::min(f + 1, last)));
 
-        // Advect particles
-        for (auto& p : positions)
-            p = rk4_step(v0, v1, p, dt);
+        tbb::parallel_for_each(
+            positions.begin(),
+            positions.end(),
+
+            [&](auto& p) {
+                p = rk4_step(v0, v1, p, dt);
+            }
+        );
+        
+
+        //// Advect particles
+        //for (auto& p : positions)
+        //    p = rk4_step(v0, v1, p, dt);
 
         // Write Alembic sample
         schema.set(OPointsSchema::Sample(
             V3fArraySample(positions),
             UInt64ArraySample(ids)
         ));
+
+		auto frame_end = Clock::now();
+        std::chrono::duration<double> frame_dur = frame_end - frame_begin;
+        fmt::print("Frame {:04d}: {} particles, time {:.3f} s, sim time {:.3f} s\n",
+			f, positions.size(), frame_dur.count(), t);
     }
 
     fmt::print("Finished writing {}\n", out_path.string());
