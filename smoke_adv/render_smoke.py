@@ -6,7 +6,8 @@ from mathutils import Vector
 # User settings
 # ============================================================
 ABC_PATH = r"C:\Code\Cirrus\output\smokesphere\smoke_particles.abc"  # TODO
-OUTPUT_DIR = r"C:\Code\Cirrus\smoke_adv\render_out"                 # TODO
+abc_dir = os.path.dirname(ABC_PATH)
+OUTPUT_DIR = os.path.join(abc_dir, "render")
 RENDER_RES = (1920, 1080)
 
 # Domain & sim resolution (given by you)
@@ -21,7 +22,7 @@ DX         = 1.0 / SIM_RES
 VOXEL_SIZE    = 1.5 * DX      # ~0.00293
 VOLUME_RADIUS = 5.0 * DX      # ~0.00977
 
-DENSITY_SCALE  = 70.0
+DENSITY_SCALE  = 2.0
 ANISOTROPY     = 0.35
 NOISE_SCALE    = 6.0
 NOISE_STRENGTH = 0.60
@@ -389,13 +390,18 @@ print("  bpy.ops.render.render(animation=True)")
 print(f"Params: VOXEL_SIZE={VOXEL_SIZE:.6f}, RADIUS={VOLUME_RADIUS:.6f}, DENSITY_SCALE={DENSITY_SCALE}")
 print(f"Scene frames: {scene.frame_start} -> {scene.frame_end}")
 
-# # --- Actually render ---
-# scene = bpy.context.scene
+# --- Actually render ---
+scene = bpy.context.scene
 
-# # Make sure output path ends with a separator + base name
-# # e.g. C:\...\render_out\smoke_
-# scene.render.filepath = os.path.join(OUTPUT_DIR, "smoke_")
+# Make sure output path ends with a separator + base name
+# e.g. C:\...\render_out\smoke_
+scene.render.filepath = os.path.join(OUTPUT_DIR, "smoke_")
 
 # # Render animation (writes frames to disk)
 # bpy.ops.render.render(animation=True)
-# print("Render finished.")
+
+# Render last frame for debug
+scene.frame_set(scene.frame_end)
+bpy.ops.render.render(write_still=True)
+
+print("Render finished.")
