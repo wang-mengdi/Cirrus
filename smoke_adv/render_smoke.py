@@ -1,5 +1,6 @@
 import bpy
 import os
+import math
 from mathutils import Vector
 
 # ============================================================
@@ -69,6 +70,31 @@ def import_alembic(filepath: str):
     bpy.ops.wm.alembic_import(filepath=filepath, set_frame_range=True)
 
     print(f"[Alembic] scene frame range: {scene.frame_start} -> {scene.frame_end} (was {old_start}->{old_end})")
+
+    # print full world transform matrix for ALL objects in the scene
+    print("=== [DBG] Objects in scene ===")
+    for obj in sorted(scene.objects, key=lambda o: o.name):
+        mw = obj.matrix_world
+        print(f"[Alembic][Matrix] {obj.name}  type={obj.type}")
+        print(f"  [{mw[0][0]: .6f} {mw[0][1]: .6f} {mw[0][2]: .6f} {mw[0][3]: .6f}]")
+        print(f"  [{mw[1][0]: .6f} {mw[1][1]: .6f} {mw[1][2]: .6f} {mw[1][3]: .6f}]")
+        print(f"  [{mw[2][0]: .6f} {mw[2][1]: .6f} {mw[2][2]: .6f} {mw[2][3]: .6f}]")
+        print(f"  [{mw[3][0]: .6f} {mw[3][1]: .6f} {mw[3][2]: .6f} {mw[3][3]: .6f}]")
+
+def rotate_all_pointclouds_x_minus_90():
+    """
+    Rotate all POINTCLOUD objects:
+    clockwise 90 degrees around X axis (i.e. -90 deg).
+    """
+    angle = -math.pi * 0.5
+
+    for obj in bpy.data.objects:
+        if obj.type == 'POINTCLOUD':
+            # Apply rotation in object space
+            rx, ry, rz = obj.rotation_euler
+            obj.rotation_euler = (rx + angle, ry, rz)
+
+            print(f"[AxisFix] Rotated POINTCLOUD '{obj.name}' by -90° around X")
 
 def create_black_smoke_volume_material(name="M_BlackSmoke"):
     mat = bpy.data.materials.new(name)
@@ -320,7 +346,7 @@ def setup_camera_and_lights():
     # --- place camera (diagonal view, classic smoke shot) ---
     view_dir = Vector((1.0, -1.0, 0.8)).normalized()
 
-    distance = 3.0 * radius           # safe distance
+    distance = 1.5 * radius           # safe distance
     cam.location = center + view_dir * distance
 
     # --- look at center ---
@@ -371,11 +397,16 @@ ensure_dir(OUTPUT_DIR)
 # Import Alembic (sets scene frame range)
 import_alembic(ABC_PATH)
 
+rotate_all_pointclouds_x_minus_90()
+
 # Find imported object
 imported = list(bpy.context.selected_objects) or list(bpy.data.objects)
 pts_obj = pick_imported_point_object(imported)
 if pts_obj is None:
     raise RuntimeError("Could not find imported point object. Please inspect imported objects and select manually.")
+
+
+
 
 # Material & GN
 mat = create_black_smoke_volume_material()
@@ -431,3 +462,49 @@ scene.frame_set(scene.frame_end)
 bpy.ops.render.render(write_still=True)
 
 print("Render finished.")
+# ============================================================
+# Debug info
+
+print("=== [DBG] Objects in scene ===")
+for o in bpy.data.objects:
+    print(f"  {o.name:30s} type={o.type:10s} loc={tuple(o.location)} scale={tuple(o.scale)}")
+print("=== [DBG] Selected objects ===", [o.name for o in bpy.context.selected_objects])
+print("=== [DBG] Active object ===", getattr(bpy.context.view_layer.objects.active, "name", None))
+print("=== [DBG] pts_obj ===", pts_obj.name, pts_obj.type)
+
+
+from mathutils import Vector
+
+def print_world_bbox(obj, tag):
+    mn = Vector((1e30, 1e30, 1e30))
+    mx = Vector((-1e30, -1e30, -1e30))
+    for p in obj.bound_box:
+        w = obj.matrix_world @ Vector(p)
+        mn.x = min(mn.x, w.x); mn.y = min(mn.y, w.y); mn.z = min(mn.z, w.z)
+        mx.x = max(mx.x, w.x); mx.y = max(mx.y, w.y); mx.z = max(mx.z, w.z)
+    center = (mn + mx) * 0.5
+    size = (mx - mn)
+    print(f"=== [DBG] {tag} world bbox ===")
+    print("  mn    =", tuple(mn))
+    print("  mx    =", tuple(mx))
+    print("  center=", tuple(center))
+    print("  size  =", tuple(size))
+
+print_world_bbox(pts_obj, "pts_obj")
+source = Vector((0.5, 0.5, 0.18))
+source_w = pts_obj.matrix_world @ source
+print("=== [DBG] source world ===", tuple(source_w))
+
+domain_center = Vector((0.5, 0.5, 0.5))
+domain_center_w = pts_obj.matrix_world @ domain_center
+print("=== [DBG] domain_center world ===", tuple(domain_center_w))
+
+cam = bpy.context.scene.camera
+print("=== [DBG] camera ===", cam.name)
+print("  cam.loc   =", tuple(cam.location))
+print("  cam.rot   =", tuple(cam.rotation_euler))
+print("  cam.lens  =", cam.data.lens)
+print("  clip      =", cam.data.clip_start, cam.data.clip_end)
+print("=== [DBG] look target (domain center) ===", (0.5, 0.5, 0.5))
+
+
