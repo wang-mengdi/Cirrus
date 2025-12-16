@@ -22,7 +22,7 @@ DX         = 1.0 / SIM_RES
 VOXEL_SIZE    = 1.5 * DX      # ~0.00293
 VOLUME_RADIUS = 5.0 * DX      # ~0.00977
 
-DENSITY_SCALE  = 2.0
+DENSITY_SCALE  = 70.0
 ANISOTROPY     = 0.35
 NOISE_SCALE    = 6.0
 NOISE_STRENGTH = 0.60
@@ -299,16 +299,36 @@ def create_points_to_volume_gn(name="GN_PointsToVolume", volume_mat=None):
 
 def setup_camera_and_lights():
     scene = bpy.context.scene
-    center = (DOMAIN_MIN + DOMAIN_MAX) * 0.5
 
-    # Camera
+    # --- known bounding box ---
+    bb_min = DOMAIN_MIN
+    bb_max = DOMAIN_MAX
+    center = (bb_min + bb_max) * 0.5
+    radius = (bb_max - bb_min).length * 0.5  # ~= 0.866 for unit cube
+
+    # --- create camera ---
     cam_data = bpy.data.cameras.new("Camera")
     cam = bpy.data.objects.new("Camera", cam_data)
-    bpy.context.collection.objects.link(cam)
+    scene.collection.objects.link(cam)
     scene.camera = cam
-    cam.location = Vector((1.7, -1.4, 1.2))
-    look_at(cam, center)
-    cam_data.lens = 50
+
+    # --- camera parameters ---
+    cam_data.lens = 28.0              # wide enough for volume
+    cam_data.clip_start = 0.001       # critical for volume
+    cam_data.clip_end = 20.0
+
+    # --- place camera (diagonal view, classic smoke shot) ---
+    view_dir = Vector((1.0, -1.0, 0.8)).normalized()
+
+    distance = 3.0 * radius           # safe distance
+    cam.location = center + view_dir * distance
+
+    # --- look at center ---
+    direction = center - cam.location
+    cam.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
+
+    print("[Camera] location:", cam.location)
+    print("[Camera] looking at:", center)
 
     # Key backlight
     key_data = bpy.data.lights.new(name="KeyBack", type='AREA')
