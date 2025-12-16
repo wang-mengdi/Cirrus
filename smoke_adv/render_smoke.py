@@ -1,5 +1,6 @@
 import bpy
 import os
+import math
 from mathutils import Vector
 
 # ============================================================
@@ -19,16 +20,16 @@ DX         = 1.0 / SIM_RES
 # ============================================================
 # Defaults tuned for [0,1]^3 and <=200k points
 # ============================================================
-VOXEL_SIZE    = 1.5 * DX      # ~0.00293
-VOLUME_RADIUS = 5.0 * DX      # ~0.00977
+VOXEL_SIZE    = 1.0 * DX
+VOLUME_RADIUS = 2.5 * DX
 
-DENSITY_SCALE  = 70.0
-ANISOTROPY     = 0.35
+DENSITY_SCALE  = 28.0
+ANISOTROPY     = 0.0
 NOISE_SCALE    = 6.0
 NOISE_STRENGTH = 0.60
 
-CYCLES_SAMPLES    = 256
-VOLUME_STEPS_RATE = 0.5
+CYCLES_SAMPLES    = 512
+VOLUME_STEPS_RATE = 0.2
 VOLUME_MAX_STEPS  = 1024
 USE_GPU           = True
 
@@ -69,6 +70,31 @@ def import_alembic(filepath: str):
     bpy.ops.wm.alembic_import(filepath=filepath, set_frame_range=True)
 
     print(f"[Alembic] scene frame range: {scene.frame_start} -> {scene.frame_end} (was {old_start}->{old_end})")
+
+    # print full world transform matrix for ALL objects in the scene
+    print("=== [DBG] Objects in scene ===")
+    for obj in sorted(scene.objects, key=lambda o: o.name):
+        mw = obj.matrix_world
+        print(f"[Alembic][Matrix] {obj.name}  type={obj.type}")
+        print(f"  [{mw[0][0]: .6f} {mw[0][1]: .6f} {mw[0][2]: .6f} {mw[0][3]: .6f}]")
+        print(f"  [{mw[1][0]: .6f} {mw[1][1]: .6f} {mw[1][2]: .6f} {mw[1][3]: .6f}]")
+        print(f"  [{mw[2][0]: .6f} {mw[2][1]: .6f} {mw[2][2]: .6f} {mw[2][3]: .6f}]")
+        print(f"  [{mw[3][0]: .6f} {mw[3][1]: .6f} {mw[3][2]: .6f} {mw[3][3]: .6f}]")
+
+def rotate_all_pointclouds_x_minus_90():
+    """
+    Rotate all POINTCLOUD objects:
+    clockwise 90 degrees around X axis (i.e. -90 deg).
+    """
+    angle = -math.pi * 0.5
+
+    for obj in bpy.data.objects:
+        if obj.type == 'POINTCLOUD':
+            # Apply rotation in object space
+            rx, ry, rz = obj.rotation_euler
+            obj.rotation_euler = (rx + angle, ry, rz)
+
+            print(f"[AxisFix] Rotated POINTCLOUD '{obj.name}' by -90° around X")
 
 def create_black_smoke_volume_material(name="M_BlackSmoke"):
     mat = bpy.data.materials.new(name)
@@ -320,7 +346,7 @@ def setup_camera_and_lights():
     # --- place camera (diagonal view, classic smoke shot) ---
     view_dir = Vector((1.0, -1.0, 0.8)).normalized()
 
-    distance = 3.0 * radius           # safe distance
+    distance = 1.5 * radius           # safe distance
     cam.location = center + view_dir * distance
 
     # --- look at center ---
@@ -371,11 +397,16 @@ ensure_dir(OUTPUT_DIR)
 # Import Alembic (sets scene frame range)
 import_alembic(ABC_PATH)
 
+rotate_all_pointclouds_x_minus_90()
+
 # Find imported object
 imported = list(bpy.context.selected_objects) or list(bpy.data.objects)
 pts_obj = pick_imported_point_object(imported)
 if pts_obj is None:
     raise RuntimeError("Could not find imported point object. Please inspect imported objects and select manually.")
+
+
+
 
 # Material & GN
 mat = create_black_smoke_volume_material()
@@ -397,7 +428,7 @@ if USE_GPU:
         print("GPU setup failed, falling back to CPU:", e)
 
 scene.cycles.samples = CYCLES_SAMPLES
-scene.cycles.use_denoising = True
+scene.cycles.use_denoising = False
 scene.cycles.volume_step_rate = VOLUME_STEPS_RATE
 scene.cycles.volume_max_steps = VOLUME_MAX_STEPS
 
