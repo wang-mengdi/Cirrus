@@ -347,15 +347,24 @@ int main(int argc, char** argv)
     std::vector<float>    birth_time;
 
     uint64_t next_id = 0;
-    LCG rng(1234);
+    LCG rng(42);
+
+    // ------------------------------------------------------------
+    // Preload velocity fields (sliding window)
+    // ------------------------------------------------------------
+    VelocityField v_curr = load_velocity_frame(
+        input_dir / fmt::format("frame{:04d}.json", first));
+
+    VelocityField v_next = load_velocity_frame(
+        input_dir / fmt::format("frame{:04d}.json",
+            std::min(first + 1, last)));
 
     // Main simulation loop
     for (int f = first; f <= last; ++f) {
         auto frame_begin = Clock::now();
-
         float t = (f - first) * dt;
 
-        // Spawn new particles
+        // Spawn new particles (unchanged)
         for (int i = 0; i < kSpawnPerFrame; ++i) {
             V3f jitter(
                 (rng.next_f01() - 0.5f) * kSourceBox.x,
@@ -367,7 +376,7 @@ int main(int argc, char** argv)
             birth_time.push_back(t);
         }
 
-        // Remove dead or out-of-range particles
+        // Remove dead or out-of-range particles (unchanged)
         size_t w = 0;
         for (size_t i = 0; i < positions.size(); ++i) {
             if ((t - birth_time[i]) <= kLifeSeconds &&
@@ -383,58 +392,60 @@ int main(int argc, char** argv)
         ids.resize(w);
         birth_time.resize(w);
 
-		auto remove_time = Clock::now();
+        auto remove_time = Clock::now();
         std::chrono::duration<double> remove_dur = remove_time - frame_begin;
         fmt::print("Frame {:04d}: Spawned {}, {} alive after removal, time {:.3f} s\n",
-			f, kSpawnPerFrame, positions.size(), remove_dur.count());
+            f, kSpawnPerFrame, positions.size(), remove_dur.count());
 
-
-        // Load velocity fields
-        auto v0 = load_velocity_frame(
-            input_dir / fmt::format("frame{:04d}.json", f));
-        auto v1 = load_velocity_frame(
-            input_dir / fmt::format("frame{:04d}.json",
-                std::min(f + 1, last)));
-
-		auto load_time = Clock::now();
-        std::chrono::duration<double> load_dur = load_time - remove_time;
-		fmt::print("Frame {:04d}: Loaded velocity fields, time {:.3f} s\n",
-			f, load_dur.count());
-
+        // Advect using the preloaded fields
         tbb::parallel_for_each(
             positions.begin(),
             positions.end(),
-
             [&](auto& p) {
-                p = rk4_step(v0, v1, p, dt);
+                p = rk4_step(v_curr, v_next, p, dt);
             }
         );
-        
-		auto advect_time = Clock::now();
-        std::chrono::duration<double> advect_dur = advect_time - load_time;
-		fmt::print("Frame {:04d}: Advected particles, time {:.3f} s\n",
-			f, advect_dur.count());
 
-        //// Advect particles
-        //for (auto& p : positions)
-        //    p = rk4_step(v0, v1, p, dt);
+        auto advect_time = Clock::now();
+        std::chrono::duration<double> advect_dur = advect_time - remove_time;
+        fmt::print("Frame {:04d}: Advected particles, time {:.3f} s\n",
+            f, advect_dur.count());
 
-        // Write Alembic sample
+        // Write Alembic sample (unchanged)
         schema.set(OPointsSchema::Sample(
             V3fArraySample(positions),
             UInt64ArraySample(ids)
         ));
 
-		auto write_time = Clock::now();
+        auto write_time = Clock::now();
         std::chrono::duration<double> write_dur = write_time - advect_time;
         fmt::print("Frame {:04d}: Wrote Alembic sample, time {:.3f} s\n",
-			f, write_dur.count());
+            f, write_dur.count());
 
-		auto frame_end = Clock::now();
+        // ------------------------------------------------------------
+        // Slide the window: load ONLY ONE new frame per iteration
+        // ------------------------------------------------------------
+        // After processing frame f, advance:
+        //   v_curr <- v_next
+        //   v_next <- frame(f+2)   (clamped to last)
+        if (f < last) {
+            v_curr = std::move(v_next);
+            int f2 = std::min(f + 2, last);
+            v_next = load_velocity_frame(
+                input_dir / fmt::format("frame{:04d}.json", f2));
+
+            auto load_time = Clock::now();
+            std::chrono::duration<double> load_dur = load_time - write_time;
+            fmt::print("Frame {:04d}: Loaded next velocity field (frame {:04d}), time {:.3f} s\n",
+                f, f2, load_dur.count());
+        }
+
+        auto frame_end = Clock::now();
         std::chrono::duration<double> frame_dur = frame_end - frame_begin;
         fmt::print("Frame {:04d}: {} particles, time {:.3f} s, sim time {:.3f} s\n\n",
-			f, positions.size(), frame_dur.count(), t);
+            f, positions.size(), frame_dur.count(), t);
     }
+
 
     fmt::print("Finished writing {}\n", out_path.string());
     return 0;
