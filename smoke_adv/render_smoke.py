@@ -340,6 +340,12 @@ def pick_imported_point_object(objs):
 # ============================================================
 # Main
 # ============================================================
+def clear_scene():
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.ops.object.delete(use_global=False)
+
+clear_scene()
+
 ensure_dir(OUTPUT_DIR)
 
 # Import Alembic (sets scene frame range)
