@@ -20,16 +20,16 @@ DX         = 1.0 / SIM_RES
 # ============================================================
 # Defaults tuned for [0,1]^3 and <=200k points
 # ============================================================
-VOXEL_SIZE    = 1.5 * DX      # ~0.00293
-VOLUME_RADIUS = 5.0 * DX      # ~0.00977
+VOXEL_SIZE    = 1.0 * DX
+VOLUME_RADIUS = 2.5 * DX
 
-DENSITY_SCALE  = 70.0
-ANISOTROPY     = 0.35
+DENSITY_SCALE  = 28.0
+ANISOTROPY     = 0.0
 NOISE_SCALE    = 6.0
 NOISE_STRENGTH = 0.60
 
-CYCLES_SAMPLES    = 256
-VOLUME_STEPS_RATE = 0.5
+CYCLES_SAMPLES    = 512
+VOLUME_STEPS_RATE = 0.2
 VOLUME_MAX_STEPS  = 1024
 USE_GPU           = True
 
@@ -428,7 +428,7 @@ if USE_GPU:
         print("GPU setup failed, falling back to CPU:", e)
 
 scene.cycles.samples = CYCLES_SAMPLES
-scene.cycles.use_denoising = True
+scene.cycles.use_denoising = False
 scene.cycles.volume_step_rate = VOLUME_STEPS_RATE
 scene.cycles.volume_max_steps = VOLUME_MAX_STEPS
 
@@ -462,49 +462,3 @@ scene.frame_set(scene.frame_end)
 bpy.ops.render.render(write_still=True)
 
 print("Render finished.")
-# ============================================================
-# Debug info
-
-print("=== [DBG] Objects in scene ===")
-for o in bpy.data.objects:
-    print(f"  {o.name:30s} type={o.type:10s} loc={tuple(o.location)} scale={tuple(o.scale)}")
-print("=== [DBG] Selected objects ===", [o.name for o in bpy.context.selected_objects])
-print("=== [DBG] Active object ===", getattr(bpy.context.view_layer.objects.active, "name", None))
-print("=== [DBG] pts_obj ===", pts_obj.name, pts_obj.type)
-
-
-from mathutils import Vector
-
-def print_world_bbox(obj, tag):
-    mn = Vector((1e30, 1e30, 1e30))
-    mx = Vector((-1e30, -1e30, -1e30))
-    for p in obj.bound_box:
-        w = obj.matrix_world @ Vector(p)
-        mn.x = min(mn.x, w.x); mn.y = min(mn.y, w.y); mn.z = min(mn.z, w.z)
-        mx.x = max(mx.x, w.x); mx.y = max(mx.y, w.y); mx.z = max(mx.z, w.z)
-    center = (mn + mx) * 0.5
-    size = (mx - mn)
-    print(f"=== [DBG] {tag} world bbox ===")
-    print("  mn    =", tuple(mn))
-    print("  mx    =", tuple(mx))
-    print("  center=", tuple(center))
-    print("  size  =", tuple(size))
-
-print_world_bbox(pts_obj, "pts_obj")
-source = Vector((0.5, 0.5, 0.18))
-source_w = pts_obj.matrix_world @ source
-print("=== [DBG] source world ===", tuple(source_w))
-
-domain_center = Vector((0.5, 0.5, 0.5))
-domain_center_w = pts_obj.matrix_world @ domain_center
-print("=== [DBG] domain_center world ===", tuple(domain_center_w))
-
-cam = bpy.context.scene.camera
-print("=== [DBG] camera ===", cam.name)
-print("  cam.loc   =", tuple(cam.location))
-print("  cam.rot   =", tuple(cam.rotation_euler))
-print("  cam.lens  =", cam.data.lens)
-print("  clip      =", cam.data.clip_start, cam.data.clip_end)
-print("=== [DBG] look target (domain center) ===", (0.5, 0.5, 0.5))
-
-
