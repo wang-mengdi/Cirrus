@@ -302,8 +302,8 @@ static inline V3f rk4_step(const VelocityField& v0,
 // ------------------------------------------------------------
 // Global simulation constants (tune later)
 // ------------------------------------------------------------
-static constexpr int   kSpawnPerFrame = 20000;
-static constexpr float kLifeSeconds = 0.5f;
+static constexpr int   kSpawnPerFrame = 2000;
+static constexpr float kLifeSeconds = 5.f;
 static constexpr float kZClamp = 1.0f;
 
 static const V3f kSourceCenter(0.5f, 0.5f, 0.18f);
@@ -383,12 +383,23 @@ int main(int argc, char** argv)
         ids.resize(w);
         birth_time.resize(w);
 
+		auto remove_time = Clock::now();
+        std::chrono::duration<double> remove_dur = remove_time - frame_begin;
+        fmt::print("Frame {:04d}: Spawned {}, {} alive after removal, time {:.3f} s\n",
+			f, kSpawnPerFrame, positions.size(), remove_dur.count());
+
+
         // Load velocity fields
         auto v0 = load_velocity_frame(
             input_dir / fmt::format("frame{:04d}.json", f));
         auto v1 = load_velocity_frame(
             input_dir / fmt::format("frame{:04d}.json",
                 std::min(f + 1, last)));
+
+		auto load_time = Clock::now();
+        std::chrono::duration<double> load_dur = load_time - remove_time;
+		fmt::print("Frame {:04d}: Loaded velocity fields, time {:.3f} s\n",
+			f, load_dur.count());
 
         tbb::parallel_for_each(
             positions.begin(),
@@ -399,6 +410,10 @@ int main(int argc, char** argv)
             }
         );
         
+		auto advect_time = Clock::now();
+        std::chrono::duration<double> advect_dur = advect_time - load_time;
+		fmt::print("Frame {:04d}: Advected particles, time {:.3f} s\n",
+			f, advect_dur.count());
 
         //// Advect particles
         //for (auto& p : positions)
@@ -410,9 +425,14 @@ int main(int argc, char** argv)
             UInt64ArraySample(ids)
         ));
 
+		auto write_time = Clock::now();
+        std::chrono::duration<double> write_dur = write_time - advect_time;
+        fmt::print("Frame {:04d}: Wrote Alembic sample, time {:.3f} s\n",
+			f, write_dur.count());
+
 		auto frame_end = Clock::now();
         std::chrono::duration<double> frame_dur = frame_end - frame_begin;
-        fmt::print("Frame {:04d}: {} particles, time {:.3f} s, sim time {:.3f} s\n",
+        fmt::print("Frame {:04d}: {} particles, time {:.3f} s, sim time {:.3f} s\n\n",
 			f, positions.size(), frame_dur.count(), t);
     }
 
