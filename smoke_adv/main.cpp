@@ -123,96 +123,105 @@ struct GridMeta {
 
 struct VelocityField {
     GridMeta meta;
-    std::vector<float> v; // size = nx * ny * nz * 3
+    std::vector<float> v; // nx*ny*nz*3 floats
+    bool initialized = false;
 
     bool valid() const {
         return meta.nx > 1 && meta.ny > 1 && meta.nz > 1 &&
             (int)v.size() == meta.nx * meta.ny * meta.nz * 3;
     }
+
+    // Reusable loader: overwrite internal buffer without resizing after the first time.
+    void load_from_json(const fs::path& frame_json_path) {
+        std::ifstream fin(frame_json_path);
+        if (!fin) {
+            throw std::runtime_error("Cannot open frame json: " + frame_json_path.string());
+        }
+
+        json j;
+        fin >> j;
+
+        // Grid metadata
+        GridMeta new_meta;
+        auto& g = j.at("grid");
+        auto dims = g.at("dimensions");
+        new_meta.nx = dims.at(0).get<int>();
+        new_meta.ny = dims.at(1).get<int>();
+        new_meta.nz = dims.at(2).get<int>();
+
+        auto org = g.at("origin");
+        for (int i = 0; i < 3; ++i) new_meta.origin[i] = org.at(i).get<float>();
+
+        auto sp = g.at("spacing");
+        for (int i = 0; i < 3; ++i) new_meta.spacing[i] = sp.at(i).get<float>();
+
+        // Validate layout assumptions
+        auto& layout = j.at("layout");
+        if (layout.value("dtype", "") != "float32" ||
+            layout.value("components_order", "") != "AoS" ||
+            layout.value("index_order", "") != "z_fastest")
+        {
+            throw std::runtime_error("Unsupported layout in " + frame_json_path.string());
+        }
+
+        // Locate velocity channel
+        uint64_t offset_bytes = 0;
+        uint64_t bytes = 0;
+        bool found = false;
+
+        for (auto& ch : j.at("channels")) {
+            if (ch.value("name", "") == "velocity") {
+                offset_bytes = ch.at("offset_bytes").get<uint64_t>();
+                bytes = ch.at("bytes").get<uint64_t>();
+                if (ch.at("components").get<int>() != 3) {
+                    throw std::runtime_error("Velocity must have 3 components");
+                }
+                found = true;
+                break;
+            }
+        }
+        if (!found) throw std::runtime_error("Velocity channel not found");
+
+        const uint64_t expected_bytes =
+            uint64_t(new_meta.nx) * new_meta.ny * new_meta.nz * 3ull * 4ull;
+        if (bytes != expected_bytes) {
+            throw std::runtime_error("Velocity byte size mismatch");
+        }
+
+        const size_t expected_floats = size_t(expected_bytes / 4ull);
+
+        // First time: adopt meta and allocate once
+        if (!initialized) {
+            meta = new_meta;
+            v.resize(expected_floats);
+            initialized = true;
+        }
+        else {
+            // Subsequent: ensure consistent (you said all frames match)
+            if (new_meta.nx != meta.nx || new_meta.ny != meta.ny || new_meta.nz != meta.nz ||
+                new_meta.origin[0] != meta.origin[0] || new_meta.origin[1] != meta.origin[1] || new_meta.origin[2] != meta.origin[2] ||
+                new_meta.spacing[0] != meta.spacing[0] || new_meta.spacing[1] != meta.spacing[1] || new_meta.spacing[2] != meta.spacing[2])
+            {
+                throw std::runtime_error("Grid meta changed across frames: " + frame_json_path.string());
+            }
+            // v.size() should already match; no resize here
+            if (v.size() != expected_floats) {
+                throw std::runtime_error("Internal buffer size mismatch");
+            }
+        }
+
+        // Read binary payload directly into existing buffer
+        fs::path bin_path = frame_json_path.parent_path() / j.at("binary_file").get<std::string>();
+        std::ifstream fb(bin_path, std::ios::binary);
+        if (!fb) throw std::runtime_error("Cannot open binary file: " + bin_path.string());
+
+        fb.seekg((std::streamoff)offset_bytes, std::ios::beg);
+        fb.read(reinterpret_cast<char*>(v.data()), (std::streamsize)expected_bytes);
+
+        if (!valid()) throw std::runtime_error("Invalid velocity field after read");
+    }
 };
 
-// Load one frame of velocity data from a json description
-// and its associated binary file.
-static VelocityField load_velocity_frame(const fs::path& frame_json_path)
-{
-    std::ifstream fin(frame_json_path);
-    if (!fin)
-        throw std::runtime_error("Cannot open frame json: " +
-            frame_json_path.string());
-
-    json j;
-    fin >> j;
-
-    VelocityField out;
-
-    // Grid metadata
-    auto& g = j.at("grid");
-    auto dims = g.at("dimensions");
-    out.meta.nx = dims.at(0).get<int>();
-    out.meta.ny = dims.at(1).get<int>();
-    out.meta.nz = dims.at(2).get<int>();
-
-    auto org = g.at("origin");
-    for (int i = 0; i < 3; ++i)
-        out.meta.origin[i] = org.at(i).get<float>();
-
-    auto sp = g.at("spacing");
-    for (int i = 0; i < 3; ++i)
-        out.meta.spacing[i] = sp.at(i).get<float>();
-
-    // Validate layout assumptions
-    auto& layout = j.at("layout");
-    if (layout.value("dtype", "") != "float32" ||
-        layout.value("components_order", "") != "AoS" ||
-        layout.value("index_order", "") != "z_fastest")
-    {
-        throw std::runtime_error("Unsupported layout in " +
-            frame_json_path.string());
-    }
-
-    // Locate velocity channel
-    uint64_t offset_bytes = 0;
-    uint64_t bytes = 0;
-    bool found = false;
-
-    for (auto& ch : j.at("channels")) {
-        if (ch.value("name", "") == "velocity") {
-            offset_bytes = ch.at("offset_bytes").get<uint64_t>();
-            bytes = ch.at("bytes").get<uint64_t>();
-            if (ch.at("components").get<int>() != 3)
-                throw std::runtime_error("Velocity must have 3 components");
-            found = true;
-            break;
-        }
-    }
-    if (!found)
-        throw std::runtime_error("Velocity channel not found");
-
-    const uint64_t expected_bytes =
-        uint64_t(out.meta.nx) * out.meta.ny * out.meta.nz * 3ull * 4ull;
-    if (bytes != expected_bytes)
-        throw std::runtime_error("Velocity byte size mismatch");
-
-    // Read binary data
-    fs::path bin_path =
-        frame_json_path.parent_path() /
-        j.at("binary_file").get<std::string>();
-
-    std::ifstream fb(bin_path, std::ios::binary);
-    if (!fb)
-        throw std::runtime_error("Cannot open binary file: " +
-            bin_path.string());
-
-    fb.seekg((std::streamoff)offset_bytes, std::ios::beg);
-    out.v.resize(expected_bytes / 4ull);
-    fb.read(reinterpret_cast<char*>(out.v.data()),
-        (std::streamsize)expected_bytes);
-
-    if (!out.valid())
-        throw std::runtime_error("Invalid velocity field");
-
-    return out;
-}
 
 // ------------------------------------------------------------
 // Trilinear interpolation utilities
@@ -352,12 +361,9 @@ int main(int argc, char** argv)
     // ------------------------------------------------------------
     // Preload velocity fields (sliding window)
     // ------------------------------------------------------------
-    VelocityField v_curr = load_velocity_frame(
-        input_dir / fmt::format("frame{:04d}.json", first));
-
-    VelocityField v_next = load_velocity_frame(
-        input_dir / fmt::format("frame{:04d}.json",
-            std::min(first + 1, last)));
+    VelocityField v_curr, v_next;
+    v_curr.load_from_json(input_dir / fmt::format("frame{:04d}.json", first));
+    v_next.load_from_json(input_dir / fmt::format("frame{:04d}.json", std::min(first + 1, last)));
 
     // Main simulation loop
     for (int f = first; f <= last; ++f) {
@@ -429,10 +435,9 @@ int main(int argc, char** argv)
         //   v_curr <- v_next
         //   v_next <- frame(f+2)   (clamped to last)
         if (f < last) {
-            v_curr = std::move(v_next);
+            std::swap(v_curr, v_next);
             int f2 = std::min(f + 2, last);
-            v_next = load_velocity_frame(
-                input_dir / fmt::format("frame{:04d}.json", f2));
+            v_next.load_from_json(input_dir / fmt::format("frame{:04d}.json", f2));
 
             auto load_time = Clock::now();
             std::chrono::duration<double> load_dur = load_time - write_time;
