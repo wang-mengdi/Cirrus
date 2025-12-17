@@ -113,83 +113,106 @@ def rotate_all_pointclouds_x_minus_90():
 
             print(f"[AxisFix] Rotated POINTCLOUD '{obj.name}' by -90° around X")
 
-def create_black_smoke_volume_material(name="MAT_Smoke_Eevee"):
-    """Eevee-friendly 'smoke blob' material: dark BSDF with noisy alpha (HASHED).
-    This is not true volume; it is a fast GPU approximation using many instanced spheres.
-    """
+def create_black_smoke_volume_material(name="MAT_Smoke_Eevee_Black_Unlit"):
     mat = bpy.data.materials.get(name)
     if mat is None:
         mat = bpy.data.materials.new(name)
     mat.use_nodes = True
+
     nt = mat.node_tree
     nodes = nt.nodes
     links = nt.links
     nodes.clear()
 
-    # Eevee transparency settings (required for noisy alpha)
-    _set_attr_safe(mat, "blend_method", "BLEND")
-    _set_attr_safe(mat, "shadow_method", "NONE")  # optional; Blender 4.5 may not have this
+    # Eevee transparency
+    if hasattr(mat, "blend_method"):
+        mat.blend_method = "BLEND"
+    if hasattr(mat, "shadow_method"):
+        mat.shadow_method = "NONE"
     mat.use_backface_culling = False
 
     out = nodes.new("ShaderNodeOutputMaterial")
-    out.location = (600, 0)
+    out.location = (820, 0)
 
-    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
-    bsdf.location = (200, 40)
-    bsdf.inputs["Base Color"].default_value = (0.03, 0.03, 0.03, 1.0)  # black smoke
-    bsdf.inputs["Roughness"].default_value = 0.95
-    # Blender 4.x renamed "Specular" to "Specular IOR Level"
-    if "Specular" in bsdf.inputs:
-        bsdf.inputs["Specular"].default_value = 0.0
-    elif "Specular IOR Level" in bsdf.inputs:
-        bsdf.inputs["Specular IOR Level"].default_value = 0.0
+    # --- Alpha density: Object coords -> Noise -> Ramp ---
+    texcoord = nodes.new("ShaderNodeTexCoord")
+    mapping  = nodes.new("ShaderNodeMapping")
+    noise    = nodes.new("ShaderNodeTexNoise")
+    ramp     = nodes.new("ShaderNodeValToRGB")
 
-    transp = nodes.new("ShaderNodeBsdfTransparent")
-    transp.location = (200, -140)
+    texcoord.location = (-900, -220)
+    mapping.location  = (-700, -220)
+    noise.location    = (-500, -220)
+    ramp.location     = (-280, -220)
 
-    mix = nodes.new("ShaderNodeMixShader")
-    mix.location = (420, -40)
-
-    # Noisy alpha mask (world-space)
-    texcoord = nodes.new("ShaderNodeTexCoord"); texcoord.location = (-700, -200)
-    mapping  = nodes.new("ShaderNodeMapping");  mapping.location  = (-520, -200)
-    noise    = nodes.new("ShaderNodeTexNoise"); noise.location    = (-320, -200)
     noise.inputs["Scale"].default_value = 10.0
     noise.inputs["Detail"].default_value = 4.0
     noise.inputs["Roughness"].default_value = 0.55
 
-    ramp = nodes.new("ShaderNodeValToRGB"); ramp.location = (-120, -200)
-    # Make a puffy mask: mostly transparent, with soft blobs
-    ramp.color_ramp.elements[0].position = 0.44
-    ramp.color_ramp.elements[1].position = 0.56
+    # 让密度更“实”，避免大面积穿孔
+    ramp.color_ramp.elements[0].position = 0.40
+    ramp.color_ramp.elements[1].position = 0.64
 
-    # Use sphere's facing to soften edges (camera-facing fade)
-    layerw = nodes.new("ShaderNodeLayerWeight"); layerw.location = (-320, -20)
-    layerw.inputs["Blend"].default_value = 0.6
-    invert = nodes.new("ShaderNodeInvert"); invert.location = (-120, -20)
-
-    mul = nodes.new("ShaderNodeMath"); mul.location = (80, -110)
-    mul.operation = 'MULTIPLY'
-    mul.inputs[1].default_value = 1.0
-
-    # Wiring
     links.new(texcoord.outputs["Object"], mapping.inputs["Vector"])
     links.new(mapping.outputs["Vector"], noise.inputs["Vector"])
     links.new(noise.outputs["Fac"], ramp.inputs["Fac"])
-    links.new(layerw.outputs["Facing"], invert.inputs["Color"])
-    links.new(ramp.outputs["Color"], mul.inputs[0])
-    links.new(invert.outputs["Color"], mul.inputs[1])
 
-    links.new(mul.outputs["Value"], mix.inputs["Fac"])
+    # --- Edge factor (Facing) for subtle rim look (still dark) ---
+    lw     = nodes.new("ShaderNodeLayerWeight")
+    inv    = nodes.new("ShaderNodeInvert")
+    lw.location  = (-500, 40)
+    inv.location = (-280, 40)
+    lw.inputs["Blend"].default_value = 0.6
+    links.new(lw.outputs["Facing"], inv.inputs["Color"])
+
+    # --- Alpha = max(density * edge, MIN_ALPHA) ---
+    mul = nodes.new("ShaderNodeMath")
+    mul.operation = "MULTIPLY"
+    mul.location = (-60, -120)
+    links.new(ramp.outputs["Color"], mul.inputs[0])
+    links.new(inv.outputs["Color"], mul.inputs[1])
+
+    min_alpha = nodes.new("ShaderNodeMath")
+    min_alpha.operation = "MAXIMUM"
+    min_alpha.location = (160, -120)
+    min_alpha.inputs[1].default_value = 0.22
+    links.new(mul.outputs["Value"], min_alpha.inputs[0])
+
+    # --- Unlit smoke color: Emission (dark) ---
+    emit = nodes.new("ShaderNodeEmission")
+    emit.location = (160, 80)
+    emit.inputs["Color"].default_value = (0.055, 0.055, 0.060, 1.0)
+
+    # Emission 强度也用 edge 稍微抬一下（模拟轮廓）
+    strength = nodes.new("ShaderNodeMath")
+    strength.operation = "ADD"
+    strength.location = (-60, 160)
+    strength.inputs[0].default_value = 0.65
+    # edge * 0.25
+    edge_scale = nodes.new("ShaderNodeMath")
+    edge_scale.operation = "MULTIPLY"
+    edge_scale.location = (-280, 160)
+    edge_scale.inputs[1].default_value = 0.25
+    links.new(inv.outputs["Color"], edge_scale.inputs[0])
+    links.new(edge_scale.outputs["Value"], strength.inputs[1])
+    links.new(strength.outputs["Value"], emit.inputs["Strength"])
+
+    # --- Mix Transparent with Emission by alpha ---
+    transp = nodes.new("ShaderNodeBsdfTransparent")
+    transp.location = (160, -260)
+
+    mix = nodes.new("ShaderNodeMixShader")
+    mix.location = (520, -80)
+    links.new(min_alpha.outputs["Value"], mix.inputs["Fac"])
+
+    # Fac=0 -> input1, Fac=1 -> input2
     links.new(transp.outputs["BSDF"], mix.inputs[1])
-    links.new(bsdf.outputs["BSDF"], mix.inputs[2])
+    links.new(emit.outputs["Emission"], mix.inputs[2])
+
     links.new(mix.outputs["Shader"], out.inputs["Surface"])
 
-    # Eevee alpha settings
-    _set_attr_safe(mat, "blend_method", "BLEND")
-    _set_attr_safe(mat, "shadow_method", "NONE")  # optional; Blender 4.5 may not have this
-    mat.use_backface_culling = False
     return mat
+
 
 def _find_socket_by_name_like(sockets, keywords):
     """Return first socket whose name contains any keyword (case-insensitive)."""
@@ -280,7 +303,7 @@ def setup_camera_and_lights():
     bg = wn.nodes.get("Background")
     if bg:
         # light grey background (like overcast sky / studio)
-        bg.inputs[0].default_value = (0.86, 0.88, 0.90, 1.0)
+        bg.inputs[0].default_value = (0.02, 0.02, 0.025, 1.0)
         bg.inputs[1].default_value = 1.0
 
     # Reduce Eevee artifacts that look like "black chunks"
@@ -402,7 +425,7 @@ scene.view_settings.view_transform = 'Filmic'
 scene.view_settings.look = 'High Contrast'
 scene.view_settings.exposure = 0.0
 
-scene.render.film_transparent = True
+scene.render.film_transparent = False
 scene.render.image_settings.file_format = 'PNG'
 scene.render.filepath = os.path.join(OUTPUT_DIR, "smoke_")
 
