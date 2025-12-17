@@ -20,23 +20,21 @@ DX         = 1.0 / SIM_RES
 # ============================================================
 # Defaults tuned for [0,1]^3 and <=200k points
 # ============================================================
-VOXEL_SIZE    = 0.5 * DX
-VOLUME_RADIUS = 1.0 * DX
+VOXEL_SIZE    = 0.75 * DX
+VOLUME_RADIUS = 1.5 * DX
 
-# Base density for the volume shader (the shader will further shape it)
-DENSITY_SCALE  = 22.0
-# Strong forward scattering helps the rim-lit look of thick smoke
-ANISOTROPY     = 0.70
+DENSITY_SCALE  = 34.0
+ANISOTROPY     = 0.65
+NOISE_SCALE    = 6.0
+NOISE_STRENGTH = 0.35
 
-# Multi-scale density breakup (big = billows, small = edge detail)
-BIG_NOISE_SCALE     = 3.0
-BIG_NOISE_STRENGTH  = 0.22
-SMALL_NOISE_SCALE   = 14.0
-SMALL_NOISE_STRENGTH= 0.08
+# Add a *small* extra absorption term to avoid the classic "white fog box"
+# where lighting direction becomes invisible. Keep this conservative.
+ABSORPTION_MULT = 1.15   # 1.0~1.6 typical; higher = darker core + stronger rim
 
 CYCLES_SAMPLES    = 512
-VOLUME_STEPS_RATE = 0.08
-VOLUME_MAX_STEPS  = 2048
+VOLUME_STEPS_RATE = 0.15
+VOLUME_MAX_STEPS  = 1024
 USE_GPU           = True
 
 # ============================================================
@@ -103,13 +101,6 @@ def rotate_all_pointclouds_x_minus_90():
             print(f"[AxisFix] Rotated POINTCLOUD '{obj.name}' by -90° around X")
 
 def create_black_smoke_volume_material(name="M_BlackSmoke"):
-    """Black smoke shader geared toward thick, photographic smoke.
-
-    Key ideas:
-      - Use BOTH scattering (to catch rim/key light) and absorption (to make it truly black/thick).
-      - Use multi-scale noise to break up density into billows + fine edge detail.
-      - Keep the noise modulation subtle; the main shape should come from the sim/points->volume.
-    """
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     nt = mat.node_tree
@@ -118,143 +109,85 @@ def create_black_smoke_volume_material(name="M_BlackSmoke"):
     nodes.clear()
 
     out = nodes.new("ShaderNodeOutputMaterial")
-    out.location = (1050, 0)
+    out.location = (820, 0)
 
-    # --- Core volumes: Scatter + Absorption (added) ---
-    vscatter = nodes.new("ShaderNodeVolumeScatter")
-    vscatter.location = (750, 80)
-    vscatter.inputs["Color"].default_value = (0.10, 0.10, 0.10, 1.0)  # deep gray, not pure black
-    vscatter.inputs["Anisotropy"].default_value = ANISOTROPY
+    pv = nodes.new("ShaderNodeVolumePrincipled")
+    pv.location = (520, 0)
+    pv.inputs["Color"].default_value = (0.08, 0.08, 0.08, 1.0)
+    pv.inputs["Absorption Color"].default_value = (0.03, 0.03, 0.03, 1.0)
+    pv.inputs["Anisotropy"].default_value = ANISOTROPY
 
-    vabsorb = nodes.new("ShaderNodeVolumeAbsorption")
-    vabsorb.location = (750, -120)
-    vabsorb.inputs["Color"].default_value = (0.02, 0.02, 0.02, 1.0)
+    # Extra absorption (conservative): restores rim/shape by preventing the
+    # volume from becoming a uniformly-lit "white fog box".
+    va = nodes.new("ShaderNodeVolumeAbsorption")
+    va.location = (520, -220)
+    va.inputs["Color"].default_value = pv.inputs["Absorption Color"].default_value
 
-    add_vol = nodes.new("ShaderNodeAddShader")
-    add_vol.location = (930, -20)
+    abs_mul = nodes.new("ShaderNodeMath")
+    abs_mul.operation = 'MULTIPLY'
+    abs_mul.location = (380, -220)
+    abs_mul.inputs[1].default_value = ABSORPTION_MULT
 
-    links.new(vscatter.outputs["Volume"], add_vol.inputs[0])
-    links.new(vabsorb.outputs["Volume"], add_vol.inputs[1])
-    links.new(add_vol.outputs["Shader"], out.inputs["Volume"])
-
-    # --- Density pipeline ---
-    # We compute a density multiplier: base * (1 + big*sb + small*ss), then clamp >= 0.
-    # This is intentionally simple and robust in background/headless runs.
-
+    # --- Noise chain (3D) ---
     texcoord = nodes.new("ShaderNodeTexCoord")
-    texcoord.location = (-980, 0)
+    texcoord.location = (-780, 0)
 
-    # Big noise (billows)
-    map_big = nodes.new("ShaderNodeMapping")
-    map_big.location = (-780, 140)
-    map_big.inputs["Scale"].default_value = (BIG_NOISE_SCALE, BIG_NOISE_SCALE, BIG_NOISE_SCALE)
+    mapping = nodes.new("ShaderNodeMapping")
+    mapping.location = (-600, 0)
+    mapping.inputs["Scale"].default_value = (NOISE_SCALE, NOISE_SCALE, NOISE_SCALE)
 
-    noise_big = nodes.new("ShaderNodeTexNoise")
-    noise_big.location = (-580, 140)
-    noise_big.inputs["Detail"].default_value = 2.0
-    noise_big.inputs["Roughness"].default_value = 0.55
+    noise = nodes.new("ShaderNodeTexNoise")
+    noise.location = (-400, 0)
+    noise.inputs["Detail"].default_value = 4.0
+    noise.inputs["Roughness"].default_value = 0.6
 
-    ramp_big = nodes.new("ShaderNodeValToRGB")
-    ramp_big.location = (-380, 140)
-    ramp_big.color_ramp.elements[0].position = 0.30
-    ramp_big.color_ramp.elements[1].position = 0.75
+    ramp = nodes.new("ShaderNodeValToRGB")
+    ramp.location = (-200, 0)
+    ramp.color_ramp.elements[0].position = 0.35
+    ramp.color_ramp.elements[1].position = 0.80
 
-    sep_big = nodes.new("ShaderNodeSeparateRGB")
-    sep_big.location = (-180, 140)
+    # Convert ramp output to a scalar in [0,1]
+    # Blender 4.5 ColorRamp outputs "Color" (and sometimes "Alpha"), not "Fac".
+    sep = nodes.new("ShaderNodeSeparateRGB")
+    sep.location = (0, 0)
 
-    mult_big = nodes.new("ShaderNodeMath")
-    mult_big.location = (20, 140)
-    mult_big.operation = 'MULTIPLY'
-    mult_big.inputs[1].default_value = BIG_NOISE_STRENGTH
+    mult = nodes.new("ShaderNodeMath")
+    mult.location = (200, -140)
+    mult.operation = 'MULTIPLY'
+    mult.inputs[1].default_value = NOISE_STRENGTH
 
-    # Small noise (edge detail)
-    map_small = nodes.new("ShaderNodeMapping")
-    map_small.location = (-780, -120)
-    map_small.inputs["Scale"].default_value = (SMALL_NOISE_SCALE, SMALL_NOISE_SCALE, SMALL_NOISE_SCALE)
+    add = nodes.new("ShaderNodeMath")
+    add.location = (380, -140)
+    add.operation = 'ADD'
+    add.inputs[1].default_value = 1.0 - (NOISE_STRENGTH * 0.5)
 
-    noise_small = nodes.new("ShaderNodeTexNoise")
-    noise_small.location = (-580, -120)
-    noise_small.inputs["Detail"].default_value = 4.0
-    noise_small.inputs["Roughness"].default_value = 0.65
+    dens_mult = nodes.new("ShaderNodeMath")
+    dens_mult.location = (380, 0)
+    dens_mult.operation = 'MULTIPLY'
+    dens_mult.inputs[1].default_value = DENSITY_SCALE
 
-    ramp_small = nodes.new("ShaderNodeValToRGB")
-    ramp_small.location = (-380, -120)
-    ramp_small.color_ramp.elements[0].position = 0.40
-    ramp_small.color_ramp.elements[1].position = 0.85
+    # Wiring
+    links.new(texcoord.outputs["Object"], mapping.inputs["Vector"])
+    links.new(mapping.outputs["Vector"], noise.inputs["Vector"])
+    links.new(noise.outputs["Fac"], ramp.inputs["Fac"])
 
-    sep_small = nodes.new("ShaderNodeSeparateRGB")
-    sep_small.location = (-180, -120)
+    # ramp -> scalar
+    links.new(ramp.outputs["Color"], sep.inputs["Image"])
+    links.new(sep.outputs["R"], mult.inputs[0])
 
-    mult_small = nodes.new("ShaderNodeMath")
-    mult_small.location = (20, -120)
-    mult_small.operation = 'MULTIPLY'
-    mult_small.inputs[1].default_value = SMALL_NOISE_STRENGTH
+    links.new(mult.outputs["Value"], add.inputs[0])
+    links.new(add.outputs["Value"], dens_mult.inputs[0])
+    links.new(dens_mult.outputs["Value"], pv.inputs["Density"])
+    links.new(dens_mult.outputs["Value"], abs_mul.inputs[0])
+    links.new(abs_mul.outputs["Value"], va.inputs["Density"])
 
-    # Sum: 1 + big + small
-    add_bs = nodes.new("ShaderNodeMath")
-    add_bs.location = (220, 40)
-    add_bs.operation = 'ADD'
-
-    add_one = nodes.new("ShaderNodeMath")
-    add_one.location = (420, 40)
-    add_one.operation = 'ADD'
-    add_one.inputs[1].default_value = 1.0
-
-    clamp = nodes.new("ShaderNodeMath")
-    clamp.location = (620, 40)
-    clamp.operation = 'MAXIMUM'
-    clamp.inputs[1].default_value = 0.0  # max(x, 0)
-
-    base = nodes.new("ShaderNodeValue")
-    base.location = (420, 200)
-    base.outputs[0].default_value = DENSITY_SCALE
-
-    dens = nodes.new("ShaderNodeMath")
-    dens.location = (820, 40)
-    dens.operation = 'MULTIPLY'
-
-    # Drive scatter/absorption with slightly different strengths:
-    scat_mult = nodes.new("ShaderNodeMath")
-    scat_mult.location = (980, 120)
-    scat_mult.operation = 'MULTIPLY'
-    scat_mult.inputs[1].default_value = 1.0  # scattering amount
-
-    abs_mult = nodes.new("ShaderNodeMath")
-    abs_mult.location = (980, -200)
-    abs_mult.operation = 'MULTIPLY'
-    abs_mult.inputs[1].default_value = 2.2  # absorption heavier => black smoke
-
-    # Wiring coords
-    links.new(texcoord.outputs["Object"], map_big.inputs["Vector"])
-    links.new(texcoord.outputs["Object"], map_small.inputs["Vector"])
-
-    links.new(map_big.outputs["Vector"], noise_big.inputs["Vector"])
-    links.new(noise_big.outputs["Fac"], ramp_big.inputs["Fac"])
-    links.new(ramp_big.outputs["Color"], sep_big.inputs["Image"])
-    links.new(sep_big.outputs["R"], mult_big.inputs[0])
-
-    links.new(map_small.outputs["Vector"], noise_small.inputs["Vector"])
-    links.new(noise_small.outputs["Fac"], ramp_small.inputs["Fac"])
-    links.new(ramp_small.outputs["Color"], sep_small.inputs["Image"])
-    links.new(sep_small.outputs["R"], mult_small.inputs[0])
-
-    links.new(mult_big.outputs["Value"], add_bs.inputs[0])
-    links.new(mult_small.outputs["Value"], add_bs.inputs[1])
-
-    links.new(add_bs.outputs["Value"], add_one.inputs[0])
-    links.new(add_one.outputs["Value"], clamp.inputs[0])
-
-    links.new(base.outputs["Value"], dens.inputs[0])
-    links.new(clamp.outputs["Value"], dens.inputs[1])
-
-    # send densities
-    links.new(dens.outputs["Value"], scat_mult.inputs[0])
-    links.new(scat_mult.outputs["Value"], vscatter.inputs["Density"])
-
-    links.new(dens.outputs["Value"], abs_mult.inputs[0])
-    links.new(abs_mult.outputs["Value"], vabsorb.inputs["Density"])
-
+    addv = nodes.new("ShaderNodeAddShader")
+    addv.location = (700, -40)
+    links.new(pv.outputs["Volume"], addv.inputs[0])
+    links.new(va.outputs["Volume"], addv.inputs[1])
+    links.new(addv.outputs["Shader"], out.inputs["Volume"])
     return mat
+
 
 def _find_socket_by_name_like(sockets, keywords):
     """Return first socket whose name contains any keyword (case-insensitive)."""
@@ -414,6 +347,28 @@ def create_points_to_volume_gn(name="GN_PointsToVolume", volume_mat=None):
 def setup_camera_and_lights():
     scene = bpy.context.scene
 
+    # ------------------------------------------------------------
+    # Realistic look: keep the world essentially black.
+    # (Rim/back light will define the smoke silhouette.)
+    # ------------------------------------------------------------
+    if scene.world is None:
+        scene.world = bpy.data.worlds.new("World")
+    scene.world.use_nodes = True
+    wnt = scene.world.node_tree
+    wnodes = wnt.nodes
+    wlinks = wnt.links
+
+    # Ensure a Background node exists and set it to black/low strength
+    bg = wnodes.get("Background")
+    if bg is None:
+        bg = wnodes.new("ShaderNodeBackground")
+        bg.location = (0, 0)
+        wout = wnodes.get("World Output") or wnodes.new("ShaderNodeOutputWorld")
+        wout.location = (200, 0)
+        wlinks.new(bg.outputs["Background"], wout.inputs["Surface"])
+    bg.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+    bg.inputs["Strength"].default_value = 0.0
+
     # --- known bounding box ---
     bb_min = DOMAIN_MIN
     bb_max = DOMAIN_MAX
@@ -427,14 +382,13 @@ def setup_camera_and_lights():
     scene.camera = cam
 
     # --- camera parameters ---
-    cam_data.lens = 28.0              # wide enough for volume
+    cam_data.lens = 35.0              # slightly tighter for a more photographic look
     cam_data.clip_start = 0.001       # critical for volume
     cam_data.clip_end = 20.0
 
     # --- place camera (diagonal view, classic smoke shot) ---
-    view_dir = Vector((1.0, -1.0, 0.8)).normalized()
-
-    distance = 1.5 * radius           # safe distance
+    view_dir = Vector((1.0, -1.0, 0.75)).normalized()
+    distance = 1.65 * radius
     cam.location = center + view_dir * distance
 
     # --- look at center ---
@@ -444,23 +398,39 @@ def setup_camera_and_lights():
     print("[Camera] location:", cam.location)
     print("[Camera] looking at:", center)
 
-    # Key backlight
-    key_data = bpy.data.lights.new(name="KeyBack", type='AREA')
-    key = bpy.data.objects.new(name="KeyBack", object_data=key_data)
-    bpy.context.collection.objects.link(key)
-    key.location = Vector((-0.3, 0.5, 1.3))
-    look_at(key, center)
-    key_data.energy = 2000
-    key_data.size = 1.2
+    # Hard-disable DOF / motion blur (avoid any true 'out of focus')
+    scene.render.use_motion_blur = False
+    cam_data.dof.use_dof = False
 
-    # Fill
+    # ------------------------------------------------------------
+    # Lighting (realistic): one large rim/back area light + a very weak fill.
+    # ------------------------------------------------------------
+
+    # Rim / backlight (cool-neutral, large, soft)
+    rim_data = bpy.data.lights.new(name="RimBack", type='AREA')
+    rim = bpy.data.objects.new(name="RimBack", object_data=rim_data)
+    bpy.context.collection.objects.link(rim)
+
+    # Place it slightly behind and to the side, above mid height
+    rim.location = center + Vector((-0.9, 0.9, 0.8)) * radius
+    look_at(rim, center)
+
+    rim_data.energy = 900.0           # start here; adjust 600~1600 if needed
+    rim_data.size = 2.8               # larger = softer rim
+    rim_data.color = (0.92, 0.94, 1.0)  # subtle cool tint
+
+    # Very weak fill (near camera side) to avoid a completely flat silhouette
     fill_data = bpy.data.lights.new(name="Fill", type='AREA')
     fill = bpy.data.objects.new(name="Fill", object_data=fill_data)
     bpy.context.collection.objects.link(fill)
-    fill.location = Vector((1.3, 0.2, 0.8))
+
+    fill.location = center + Vector((0.9, -0.6, 0.35)) * radius
     look_at(fill, center)
-    fill_data.energy = 250
-    fill_data.size = 1.0
+
+    fill_data.energy = 80.0           # keep low for realism
+    fill_data.size = 2.0
+    fill_data.color = (1.0, 1.0, 1.0)
+
 
 def pick_imported_point_object(objs):
     for obj in reversed(objs):
@@ -521,10 +491,10 @@ scene.cycles.volume_step_rate = VOLUME_STEPS_RATE
 scene.cycles.volume_max_steps = VOLUME_MAX_STEPS
 
 scene.view_settings.view_transform = 'Filmic'
-scene.view_settings.look = 'Medium High Contrast'
+scene.view_settings.look = 'High Contrast'
 scene.view_settings.exposure = 0.0
 
-scene.render.film_transparent = True
+scene.render.film_transparent = False
 scene.render.image_settings.file_format = 'PNG'
 scene.render.filepath = os.path.join(OUTPUT_DIR, "smoke_")
 

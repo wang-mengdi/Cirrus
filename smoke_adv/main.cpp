@@ -311,7 +311,7 @@ static inline V3f rk4_step(const VelocityField& v0,
 // ------------------------------------------------------------
 // Global simulation constants (tune later)
 // ------------------------------------------------------------
-static constexpr int   kSpawnPerFrame = 2000;
+static constexpr int   kSpawnPerFrame = 20000;
 static constexpr float kLifeSeconds = 5.f;
 static constexpr float kZClamp = 1.0f;
 
