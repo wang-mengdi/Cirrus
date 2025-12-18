@@ -90,16 +90,6 @@ def import_alembic(filepath: str):
 
     print(f"[Alembic] scene frame range: {scene.frame_start} -> {scene.frame_end} (was {old_start}->{old_end})")
 
-    # print full world transform matrix for ALL objects in the scene
-    print("=== [DBG] Objects in scene ===")
-    for obj in sorted(scene.objects, key=lambda o: o.name):
-        mw = obj.matrix_world
-        print(f"[Alembic][Matrix] {obj.name}  type={obj.type}")
-        print(f"  [{mw[0][0]: .6f} {mw[0][1]: .6f} {mw[0][2]: .6f} {mw[0][3]: .6f}]")
-        print(f"  [{mw[1][0]: .6f} {mw[1][1]: .6f} {mw[1][2]: .6f} {mw[1][3]: .6f}]")
-        print(f"  [{mw[2][0]: .6f} {mw[2][1]: .6f} {mw[2][2]: .6f} {mw[2][3]: .6f}]")
-        print(f"  [{mw[3][0]: .6f} {mw[3][1]: .6f} {mw[3][2]: .6f} {mw[3][3]: .6f}]")
-
 def rotate_all_pointclouds_x_minus_90():
     """
     Rotate all POINTCLOUD objects:
@@ -171,19 +161,72 @@ def create_black_smoke_volume_material(name="MAT_Smoke_Eevee_Black_Unlit"):
     mul = nodes.new("ShaderNodeMath")
     mul.operation = "MULTIPLY"
     mul.location = (-60, -120)
-    links.new(ramp.outputs["Color"], mul.inputs[0])
-    links.new(inv.outputs["Color"], mul.inputs[1])
+    # Convert ramp color -> float
+    ramp_bw = nodes.new("ShaderNodeRGBToBW")
+    ramp_bw.location = (-120, -220)
+    links.new(ramp.outputs["Color"], ramp_bw.inputs["Color"])
+
+    # Convert inv color -> float
+    inv_bw = nodes.new("ShaderNodeRGBToBW")
+    inv_bw.location = (-120, 40)
+    links.new(inv.outputs["Color"], inv_bw.inputs["Color"])
+
+    # Use floats for math
+    links.new(ramp_bw.outputs["Val"], mul.inputs[0])
+    links.new(inv_bw.outputs["Val"],  mul.inputs[1])
+
+
+    # Read "age" attribute (0..1 recommended)
+    age = nodes.new("ShaderNodeAttribute")
+    age.location = (-500, -420)
+    age.attribute_name = "age"
+
+    # Remap age -> fade curve using ColorRamp
+    # 0: newly born -> dense
+    # 1: old -> fade out
+    age_ramp = nodes.new("ShaderNodeValToRGB")
+    age_ramp.location = (-280, -420)
+    age_ramp.color_ramp.elements[0].position = 0.00
+    age_ramp.color_ramp.elements[0].color = (1.0, 1.0, 1.0, 1.0)
+    age_ramp.color_ramp.elements[1].position = 0.85
+    age_ramp.color_ramp.elements[1].color = (0.10, 0.10, 0.10, 1.0)
+    links.new(age.outputs["Fac"], age_ramp.inputs["Fac"])
+
+    alpha_fade = nodes.new("ShaderNodeMath")
+    alpha_fade.operation = "MULTIPLY"
+    alpha_fade.location = (80, -200)
+    links.new(mul.outputs["Value"], alpha_fade.inputs[0])
+    # FIX: use Fac output (float), not Color
+    age_bw = nodes.new("ShaderNodeRGBToBW")
+    age_bw.location = (-120, -420)
+    links.new(age_ramp.outputs["Color"], age_bw.inputs["Color"])
+    links.new(age_bw.outputs["Val"], alpha_fade.inputs[1])
+
+
 
     min_alpha = nodes.new("ShaderNodeMath")
     min_alpha.operation = "MAXIMUM"
     min_alpha.location = (160, -120)
-    min_alpha.inputs[1].default_value = 0.16
-    links.new(mul.outputs["Value"], min_alpha.inputs[0])
+    min_alpha.inputs[1].default_value = 0.03
+    links.new(alpha_fade.outputs["Value"], min_alpha.inputs[0])
 
-    # --- Unlit smoke color: Emission (dark) ---
+    # -- Unlit smoke color: Emission (dark) ---
     emit = nodes.new("ShaderNodeEmission")
     emit.location = (160, 80)
-    emit.inputs["Color"].default_value = (0.055, 0.055, 0.060, 1.0)
+    #emit.inputs["Color"].default_value = (0.055, 0.055, 0.060, 1.0)
+
+    # Slightly brighten smoke as it ages (looks more natural)
+    col_ramp = nodes.new("ShaderNodeValToRGB")
+    col_ramp.location = (-280, 220)
+    col_ramp.color_ramp.elements[0].position = 0.0
+    col_ramp.color_ramp.elements[0].color = (0.04, 0.04, 0.045, 1.0)
+    col_ramp.color_ramp.elements[1].position = 1.0
+    col_ramp.color_ramp.elements[1].color = (0.14, 0.14, 0.15, 1.0)
+    links.new(age.outputs["Fac"], col_ramp.inputs["Fac"])
+    links.new(col_ramp.outputs["Color"], emit.inputs["Color"])
+
+
+
 
     # Emission 强度也用 edge 稍微抬一下（模拟轮廓）
     strength = nodes.new("ShaderNodeMath")
@@ -235,63 +278,151 @@ def _float_input_sockets(node):
     return floats
 
 def create_points_to_volume_gn(name="GN_SmokeBlobs", volume_mat=None):
-    """Replace Points->Volume with fast Eevee approximation:
-    instance low-poly spheres on points, with a noisy-alpha smoke material.
+    """Eevee smoke blobs:
+    - Instance small spheres on Alembic points
+    - Preserve per-point float attribute 'age' through instancing
+      by (1) Capture Attribute with capture_items, then (2) Store Named Attribute after Realize
     """
+    # Recreate node group each run
+    old = bpy.data.node_groups.get(name)
+    if old is not None:
+        bpy.data.node_groups.remove(old)
+
     ng = bpy.data.node_groups.new(name, 'GeometryNodeTree')
     nodes = ng.nodes
     links = ng.links
 
+    # Interface
     ng.interface.new_socket(name="Geometry", in_out='INPUT',  socket_type='NodeSocketGeometry')
     ng.interface.new_socket(name="Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
 
-    inp = nodes.new("NodeGroupInput");  inp.location = (-700, 0)
-    out = nodes.new("NodeGroupOutput"); out.location = (700, 0)
+    inp = nodes.new("NodeGroupInput");  inp.location = (-900, 0)
+    out = nodes.new("NodeGroupOutput"); out.location = (900, 0)
 
-    # Icosphere prototype (very cheap)
-    ico = nodes.new("GeometryNodeMeshIcoSphere"); ico.location = (-520, -160)
+    # ------------------------------------------------------------
+    # Prototype sphere
+    # ------------------------------------------------------------
+    ico = nodes.new("GeometryNodeMeshIcoSphere"); ico.location = (-720, -220)
     ico.inputs["Subdivisions"].default_value = 1
-    ico.inputs["Radius"].default_value = VOLUME_RADIUS * 0.9  # puff size
+    ico.inputs["Radius"].default_value = VOLUME_RADIUS * 0.9
 
-    # Instance on points
-    inst = nodes.new("GeometryNodeInstanceOnPoints"); inst.location = (-260, 0)
-    inst.inputs["Pick Instance"].default_value = False
+    # ------------------------------------------------------------
+    # Read incoming point attribute "age"
+    # ------------------------------------------------------------
+    age_attr = nodes.new("GeometryNodeInputNamedAttribute"); age_attr.location = (-720, -20)
+    age_attr.data_type = 'FLOAT'
+    age_attr.inputs["Name"].default_value = "age"
 
-    # Slight random scale per point (adds grain)
-    rand = nodes.new("FunctionNodeRandomValue"); rand.location = (-520, 120)
+    # ------------------------------------------------------------
+    # Capture Attribute (Blender 4.5 requires capture_items to create sockets)
+    # ------------------------------------------------------------
+    cap = nodes.new("GeometryNodeCaptureAttribute"); cap.location = (-520, -140)
+    cap.domain = 'POINT'
+
+    # IMPORTANT: add a capture item so the Value socket exists
+    item = cap.capture_items.new('FLOAT', "age")  # creates inputs/outputs named "age"
+    # (Some builds may ignore the args; enforce)
+    item.data_type = 'FLOAT'
+    item.name = "age"
+
+    links.new(inp.outputs["Geometry"], cap.inputs["Geometry"])
+
+    # Now the socket should exist as cap.inputs["age"] and cap.outputs["age"]
+    if "age" not in cap.inputs or "age" not in cap.outputs:
+        # Fallback: find first non-Geometry input/output (covers odd naming)
+        cap_val_in = None
+        for s in cap.inputs:
+            if s.name != "Geometry":
+                cap_val_in = s
+                break
+        cap_val_out = None
+        for s in cap.outputs:
+            if s.name != "Geometry":
+                cap_val_out = s
+                break
+        if cap_val_in is None or cap_val_out is None:
+            raise RuntimeError("Capture Attribute sockets not found; Blender node API changed.")
+    else:
+        cap_val_in = cap.inputs["age"]
+        cap_val_out = cap.outputs["age"]
+
+    links.new(age_attr.outputs["Attribute"], cap_val_in)
+
+    # ------------------------------------------------------------
+    # Random scale * (1 + age*k)  (optional, helps smoke expand)
+    # ------------------------------------------------------------
+    rand = nodes.new("FunctionNodeRandomValue"); rand.location = (-720, 220)
     rand.data_type = 'FLOAT'
     rand.inputs["Min"].default_value = 0.75
     rand.inputs["Max"].default_value = 1.25
 
-    scale = nodes.new("ShaderNodeMath"); scale.location = (-300, 120)
-    scale.operation = 'MULTIPLY'
-    scale.inputs[1].default_value = 1.0
+    age_expand = nodes.new("ShaderNodeMath"); age_expand.location = (-520, 320)
+    age_expand.operation = 'MULTIPLY'
+    age_expand.inputs[1].default_value = 0.65
+    links.new(age_attr.outputs["Attribute"], age_expand.inputs[0])
 
-    # Convert random to vector scale
-    comb = nodes.new("ShaderNodeCombineXYZ"); comb.location = (-90, 120)
+    age_add = nodes.new("ShaderNodeMath"); age_add.location = (-320, 320)
+    age_add.operation = 'ADD'
+    age_add.inputs[0].default_value = 1.0
+    links.new(age_expand.outputs["Value"], age_add.inputs[1])
 
-    # Set material (on instances is fine; Eevee will shade per-instance)
-    setmat = nodes.new("GeometryNodeSetMaterial"); setmat.location = (260, 0)
+    scale_mul = nodes.new("ShaderNodeMath"); scale_mul.location = (-520, 220)
+    scale_mul.operation = 'MULTIPLY'
+    links.new(rand.outputs["Value"], scale_mul.inputs[0])
+    links.new(age_add.outputs["Value"], scale_mul.inputs[1])
+
+    comb = nodes.new("ShaderNodeCombineXYZ"); comb.location = (-320, 220)
+    links.new(scale_mul.outputs["Value"], comb.inputs["X"])
+    links.new(scale_mul.outputs["Value"], comb.inputs["Y"])
+    links.new(scale_mul.outputs["Value"], comb.inputs["Z"])
+
+    # ------------------------------------------------------------
+    # Instance on points (use captured geometry as Points input)
+    # ------------------------------------------------------------
+    inst = nodes.new("GeometryNodeInstanceOnPoints"); inst.location = (-120, 0)
+    inst.inputs["Pick Instance"].default_value = False
+    links.new(cap.outputs["Geometry"], inst.inputs["Points"])
+    links.new(ico.outputs["Mesh"], inst.inputs["Instance"])
+    links.new(comb.outputs["Vector"], inst.inputs["Scale"])
+
+    # ------------------------------------------------------------
+    # Realize instances
+    # ------------------------------------------------------------
+    realize = nodes.new("GeometryNodeRealizeInstances"); realize.location = (120, 0)
+    links.new(inst.outputs["Instances"], realize.inputs["Geometry"])
+
+    # ------------------------------------------------------------
+    # Store Named Attribute "age" on realized geometry
+    # ------------------------------------------------------------
+    store = nodes.new("GeometryNodeStoreNamedAttribute"); store.location = (340, -120)
+    store.domain = 'POINT'
+    store.data_type = 'FLOAT'
+    store.inputs["Name"].default_value = "age"
+    links.new(realize.outputs["Geometry"], store.inputs["Geometry"])
+
+    # Store node's value socket name varies a bit; find first float-like input that isn't Geometry/Name
+    store_val_in = None
+    for s in store.inputs:
+        if s.name not in ("Geometry", "Name"):
+            store_val_in = s
+            break
+    if store_val_in is None:
+        raise RuntimeError("Store Named Attribute has no value input socket (unexpected).")
+
+    links.new(cap_val_out, store_val_in)
+
+    # ------------------------------------------------------------
+    # Set material
+    # ------------------------------------------------------------
+    setmat = nodes.new("GeometryNodeSetMaterial"); setmat.location = (560, 0)
     if volume_mat is not None:
         setmat.inputs["Material"].default_value = volume_mat
 
-    # Optional: realize instances for stable shading (costly). Keep off by default.
-    realize = nodes.new("GeometryNodeRealizeInstances"); realize.location = (60, 0)
-
-    # Wiring
-    links.new(inp.outputs["Geometry"], inst.inputs["Points"])
-    links.new(ico.outputs["Mesh"], inst.inputs["Instance"])
-    links.new(rand.outputs["Value"], scale.inputs[0])
-    links.new(scale.outputs["Value"], comb.inputs["X"])
-    links.new(scale.outputs["Value"], comb.inputs["Y"])
-    links.new(scale.outputs["Value"], comb.inputs["Z"])
-    links.new(comb.outputs["Vector"], inst.inputs["Scale"])
-
-    links.new(inst.outputs["Instances"], realize.inputs["Geometry"])
-    links.new(realize.outputs["Geometry"], setmat.inputs["Geometry"])
+    links.new(store.outputs["Geometry"], setmat.inputs["Geometry"])
     links.new(setmat.outputs["Geometry"], out.inputs["Geometry"])
 
     return ng
+
 
 def setup_camera_and_lights():
     scene = bpy.context.scene
