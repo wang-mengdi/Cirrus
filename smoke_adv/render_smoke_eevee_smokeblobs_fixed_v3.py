@@ -161,29 +161,24 @@ def create_black_smoke_volume_material(name="MAT_Smoke_Eevee_Black_Unlit"):
     mul = nodes.new("ShaderNodeMath")
     mul.operation = "MULTIPLY"
     mul.location = (-60, -120)
-    # Convert ramp color -> float
+
     ramp_bw = nodes.new("ShaderNodeRGBToBW")
     ramp_bw.location = (-120, -220)
     links.new(ramp.outputs["Color"], ramp_bw.inputs["Color"])
 
-    # Convert inv color -> float
     inv_bw = nodes.new("ShaderNodeRGBToBW")
     inv_bw.location = (-120, 40)
     links.new(inv.outputs["Color"], inv_bw.inputs["Color"])
 
-    # Use floats for math
     links.new(ramp_bw.outputs["Val"], mul.inputs[0])
     links.new(inv_bw.outputs["Val"],  mul.inputs[1])
-
 
     # Read "age" attribute (0..1 recommended)
     age = nodes.new("ShaderNodeAttribute")
     age.location = (-500, -420)
     age.attribute_name = "age"
 
-    # Remap age -> fade curve using ColorRamp
-    # 0: newly born -> dense
-    # 1: old -> fade out
+    # Remap age -> fade curve using ColorRamp (used for alpha fade)
     age_ramp = nodes.new("ShaderNodeValToRGB")
     age_ramp.location = (-280, -420)
     age_ramp.color_ramp.elements[0].position = 0.00
@@ -192,17 +187,15 @@ def create_black_smoke_volume_material(name="MAT_Smoke_Eevee_Black_Unlit"):
     age_ramp.color_ramp.elements[1].color = (0.10, 0.10, 0.10, 1.0)
     links.new(age.outputs["Fac"], age_ramp.inputs["Fac"])
 
+    age_bw = nodes.new("ShaderNodeRGBToBW")
+    age_bw.location = (-120, -420)
+    links.new(age_ramp.outputs["Color"], age_bw.inputs["Color"])
+
     alpha_fade = nodes.new("ShaderNodeMath")
     alpha_fade.operation = "MULTIPLY"
     alpha_fade.location = (80, -200)
     links.new(mul.outputs["Value"], alpha_fade.inputs[0])
-    # FIX: use Fac output (float), not Color
-    age_bw = nodes.new("ShaderNodeRGBToBW")
-    age_bw.location = (-120, -420)
-    links.new(age_ramp.outputs["Color"], age_bw.inputs["Color"])
     links.new(age_bw.outputs["Val"], alpha_fade.inputs[1])
-
-
 
     min_alpha = nodes.new("ShaderNodeMath")
     min_alpha.operation = "MAXIMUM"
@@ -213,9 +206,8 @@ def create_black_smoke_volume_material(name="MAT_Smoke_Eevee_Black_Unlit"):
     # -- Unlit smoke color: Emission (dark) ---
     emit = nodes.new("ShaderNodeEmission")
     emit.location = (160, 80)
-    #emit.inputs["Color"].default_value = (0.055, 0.055, 0.060, 1.0)
 
-    # Slightly brighten smoke as it ages (looks more natural)
+    # Slightly brighten smoke as it ages (base color)
     col_ramp = nodes.new("ShaderNodeValToRGB")
     col_ramp.location = (-280, 220)
     col_ramp.color_ramp.elements[0].position = 0.0
@@ -225,22 +217,83 @@ def create_black_smoke_volume_material(name="MAT_Smoke_Eevee_Black_Unlit"):
     links.new(age.outputs["Fac"], col_ramp.inputs["Fac"])
     links.new(col_ramp.outputs["Color"], emit.inputs["Color"])
 
+    # ------------------------------------------------------------
+    # 🔥 Fire Glow (Scheme A): add warm "internal glow" near bottom
+    # fire = (1 - age)^p * bottom_falloff * (0.6 + 0.4*noise)
+    # ------------------------------------------------------------
 
+    # 1) young factor: (1-age)^p
+    inv_age = nodes.new("ShaderNodeMath"); inv_age.location = (-280, -560)
+    inv_age.operation = "SUBTRACT"
+    inv_age.inputs[0].default_value = 1.0
+    links.new(age.outputs["Fac"], inv_age.inputs[1])
 
+    young_pow = nodes.new("ShaderNodeMath"); young_pow.location = (-60, -560)
+    young_pow.operation = "POWER"
+    young_pow.inputs[1].default_value = 2.4  # p: bigger => fire fades faster
+    links.new(inv_age.outputs["Value"], young_pow.inputs[0])
 
-    # Emission 强度也用 edge 稍微抬一下（模拟轮廓）
+    # 2) bottom falloff from Object Z (bright near base)
+    sep = nodes.new("ShaderNodeSeparateXYZ"); sep.location = (-700, -560)
+    links.new(texcoord.outputs["Object"], sep.inputs["Vector"])
+
+    # MapRange: Z in [-0.10, 0.35] -> [1, 0]
+    z_map = nodes.new("ShaderNodeMapRange"); z_map.location = (-500, -560)
+    z_map.clamp = True
+    z_map.inputs["From Min"].default_value = -0.10
+    z_map.inputs["From Max"].default_value = 0.35
+    z_map.inputs["To Min"].default_value = 1.0
+    z_map.inputs["To Max"].default_value = 0.0
+    links.new(sep.outputs["Z"], z_map.inputs["Value"])
+
+    # 3) add a little flicker using existing noise (0.6 + 0.4*noise)
+    noise_w = nodes.new("ShaderNodeMath"); noise_w.location = (-280, -700)
+    noise_w.operation = "MULTIPLY"
+    noise_w.inputs[1].default_value = 0.4
+    links.new(noise.outputs["Fac"], noise_w.inputs[0])
+
+    noise_bias = nodes.new("ShaderNodeMath"); noise_bias.location = (-60, -700)
+    noise_bias.operation = "ADD"
+    noise_bias.inputs[0].default_value = 0.6
+    links.new(noise_w.outputs["Value"], noise_bias.inputs[1])
+
+    # 4) combine factors
+    fire_mul1 = nodes.new("ShaderNodeMath"); fire_mul1.location = (160, -560)
+    fire_mul1.operation = "MULTIPLY"
+    links.new(young_pow.outputs["Value"], fire_mul1.inputs[0])
+    links.new(z_map.outputs["Result"], fire_mul1.inputs[1])
+
+    fire_mul2 = nodes.new("ShaderNodeMath"); fire_mul2.location = (360, -560)
+    fire_mul2.operation = "MULTIPLY"
+    links.new(fire_mul1.outputs["Value"], fire_mul2.inputs[0])
+    links.new(noise_bias.outputs["Value"], fire_mul2.inputs[1])
+
+    # final intensity scale
+    fire_scale = nodes.new("ShaderNodeMath"); fire_scale.location = (560, -560)
+    fire_scale.operation = "MULTIPLY"
+    fire_scale.inputs[1].default_value = 1.2  # overall fire intensity (tune 0.6~2.0)
+    links.new(fire_mul2.outputs["Value"], fire_scale.inputs[0])
+
+    # Emission strength base: edge-lift (your existing)
     strength = nodes.new("ShaderNodeMath")
     strength.operation = "ADD"
     strength.location = (-60, 160)
     strength.inputs[0].default_value = 1.4
-    # edge * 0.25
+
     edge_scale = nodes.new("ShaderNodeMath")
     edge_scale.operation = "MULTIPLY"
     edge_scale.location = (-280, 160)
     edge_scale.inputs[1].default_value = 0.65
     links.new(inv.outputs["Color"], edge_scale.inputs[0])
     links.new(edge_scale.outputs["Value"], strength.inputs[1])
-    links.new(strength.outputs["Value"], emit.inputs["Strength"])
+
+    # Add fire glow into strength
+    strength2 = nodes.new("ShaderNodeMath"); strength2.location = (160, 160)
+    strength2.operation = "ADD"
+    links.new(strength.outputs["Value"], strength2.inputs[0])
+    links.new(fire_scale.outputs["Value"], strength2.inputs[1])
+
+    links.new(strength2.outputs["Value"], emit.inputs["Strength"])
 
     # --- Mix Transparent with Emission by alpha ---
     transp = nodes.new("ShaderNodeBsdfTransparent")
@@ -250,13 +303,13 @@ def create_black_smoke_volume_material(name="MAT_Smoke_Eevee_Black_Unlit"):
     mix.location = (520, -80)
     links.new(min_alpha.outputs["Value"], mix.inputs["Fac"])
 
-    # Fac=0 -> input1, Fac=1 -> input2
     links.new(transp.outputs["BSDF"], mix.inputs[1])
     links.new(emit.outputs["Emission"], mix.inputs[2])
 
     links.new(mix.outputs["Shader"], out.inputs["Surface"])
 
     return mat
+
 
 
 def _find_socket_by_name_like(sockets, keywords):
