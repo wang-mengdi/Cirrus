@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include <tbb/parallel_for_each.h>
+#include <tbb/parallel_for.h>
 #include <chrono>
 
 
@@ -350,10 +351,19 @@ int main(int argc, char** argv)
     OPoints points(top, "particles");
     auto& schema = points.getSchema();
     schema.setTimeSampling(ts_idx);
+    OFloatGeomParam age_param(
+        schema.getArbGeomParams(),
+        "age",                       // attribute name
+        false,                       // not indexed
+        kVertexScope,                // per-point
+        1                            // 1 float per point
+    );
+    age_param.setTimeSampling(ts_idx);
 
     std::vector<uint64_t> ids;
     std::vector<V3f>      positions;
     std::vector<float>    birth_time;
+    std::vector<float>    age;
 
     uint64_t next_id = 0;
     LCG rng(42);
@@ -411,17 +421,32 @@ int main(int argc, char** argv)
                 p = rk4_step(v_curr, v_next, p, dt);
             }
         );
+		age.resize(positions.size());
+        tbb::parallel_for(size_t(0), positions.size(), [&](size_t i) {
+			age[i] = std::clamp(t - birth_time[i], 0.0f, kLifeSeconds);
+            });
 
         auto advect_time = Clock::now();
         std::chrono::duration<double> advect_dur = advect_time - remove_time;
         fmt::print("Frame {:04d}: Advected particles, time {:.3f} s\n",
             f, advect_dur.count());
 
-        // Write Alembic sample (unchanged)
-        schema.set(OPointsSchema::Sample(
+        // ---- write points ----
+        OPointsSchema::Sample psamp{
             V3fArraySample(positions),
             UInt64ArraySample(ids)
-        ));
+        };
+        schema.set(psamp);
+
+        // ---- write age ----
+        OFloatGeomParam::Sample asamp(
+            FloatArraySample(age),
+            kVertexScope
+        );
+        age_param.set(asamp);
+
+
+
 
         auto write_time = Clock::now();
         std::chrono::duration<double> write_dur = write_time - advect_time;

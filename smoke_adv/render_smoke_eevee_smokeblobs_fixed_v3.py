@@ -41,6 +41,8 @@ VOLUME_STEPS_RATE = 0.15
 VOLUME_MAX_STEPS  = 1024
 USE_GPU           = True
 
+RENDER_ENGINE = "EEVEE" # "EEVEE" or "CYCLES"
+
 # ============================================================
 # Helpers
 # ============================================================
@@ -175,7 +177,7 @@ def create_black_smoke_volume_material(name="MAT_Smoke_Eevee_Black_Unlit"):
     min_alpha = nodes.new("ShaderNodeMath")
     min_alpha.operation = "MAXIMUM"
     min_alpha.location = (160, -120)
-    min_alpha.inputs[1].default_value = 0.22
+    min_alpha.inputs[1].default_value = 0.16
     links.new(mul.outputs["Value"], min_alpha.inputs[0])
 
     # --- Unlit smoke color: Emission (dark) ---
@@ -187,12 +189,12 @@ def create_black_smoke_volume_material(name="MAT_Smoke_Eevee_Black_Unlit"):
     strength = nodes.new("ShaderNodeMath")
     strength.operation = "ADD"
     strength.location = (-60, 160)
-    strength.inputs[0].default_value = 0.65
+    strength.inputs[0].default_value = 1.4
     # edge * 0.25
     edge_scale = nodes.new("ShaderNodeMath")
     edge_scale.operation = "MULTIPLY"
     edge_scale.location = (-280, 160)
-    edge_scale.inputs[1].default_value = 0.25
+    edge_scale.inputs[1].default_value = 0.65
     links.new(inv.outputs["Color"], edge_scale.inputs[0])
     links.new(edge_scale.outputs["Value"], strength.inputs[1])
     links.new(strength.outputs["Value"], emit.inputs["Strength"])
@@ -316,57 +318,70 @@ def setup_camera_and_lights():
         if hasattr(ee, "use_bloom"):
             ee.use_bloom = False
 
-        # --- known bounding box ---
-        bb_min = DOMAIN_MIN
-        bb_max = DOMAIN_MAX
-        center = (bb_min + bb_max) * 0.5
-        radius = (bb_max - bb_min).length * 0.5  # ~= 0.866 for unit cube
+    # --- known bounding box ---
+    bb_min = DOMAIN_MIN
+    bb_max = DOMAIN_MAX
+    center = (bb_min + bb_max) * 0.5
+    radius = (bb_max - bb_min).length * 0.5  # ~= 0.866 for unit cube
 
-        # --- create camera ---
-        cam_data = bpy.data.cameras.new("Camera")
-        cam = bpy.data.objects.new("Camera", cam_data)
-        scene.collection.objects.link(cam)
-        scene.camera = cam
+    # --- create camera ---
+    cam_data = bpy.data.cameras.new("Camera")
+    cam = bpy.data.objects.new("Camera", cam_data)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
 
-        # --- camera parameters ---
-        cam_data.lens = 28.0              # wide enough for volume
-        cam_data.clip_start = 0.001       # critical for volume
-        cam_data.clip_end = 20.0
+    # --- camera parameters ---
+    cam_data.lens = 28.0              # wide enough for volume
+    cam_data.clip_start = 0.001       # critical for volume
+    cam_data.clip_end = 20.0
 
-        # --- place camera (diagonal view, classic smoke shot) ---
-        view_dir = Vector((1.0, -1.0, 0.8)).normalized()
+    # --- place camera (diagonal view, classic smoke shot) ---
+    view_dir = Vector((1.0, -1.0, 0.8)).normalized()
 
-        distance = 1.5 * radius           # safe distance
-        cam.location = center + view_dir * distance
+    distance = 1.5 * radius           # safe distance
+    cam.location = center + view_dir * distance
 
-        # --- look at center ---
-        direction = center - cam.location
-        cam.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
+    # --- look at center ---
+    direction = center - cam.location
+    cam.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
 
-        print("[Camera] location:", cam.location)
-        print("[Camera] looking at:", center)
+    print("[Camera] location:", cam.location)
+    print("[Camera] looking at:", center)
 
-        # Key backlight
-        key_data = bpy.data.lights.new(name="KeyBack", type='AREA')
-        key = bpy.data.objects.new(name="KeyBack", object_data=key_data)
-        bpy.context.collection.objects.link(key)
-        key.location = Vector((-0.3, 0.5, 1.3))
-        look_at(key, center)
-        if hasattr(key_data, "use_shadow"):
-            key_data.use_shadow = False
-        key_data.energy = 2000
-        key_data.size = 1.2
+    # Key backlight
+    key_data = bpy.data.lights.new(name="KeyBack", type='AREA')
+    key = bpy.data.objects.new(name="KeyBack", object_data=key_data)
+    bpy.context.collection.objects.link(key)
+    key.location = Vector((-0.3, 0.5, 1.3))
+    look_at(key, center)
+    if hasattr(key_data, "use_shadow"):
+        key_data.use_shadow = False
+    key_data.energy = 2000
+    key_data.size = 1.2
 
-        # Fill
-        fill_data = bpy.data.lights.new(name="Fill", type='AREA')
-        fill = bpy.data.objects.new(name="Fill", object_data=fill_data)
-        bpy.context.collection.objects.link(fill)
-        fill.location = Vector((1.3, 0.2, 0.8))
-        look_at(fill, center)
-        if hasattr(fill_data, "use_shadow"):
-            fill_data.use_shadow = False
-        fill_data.energy = 250
-        fill_data.size = 1.0
+    # Fill
+    fill_data = bpy.data.lights.new(name="Fill", type='AREA')
+    fill = bpy.data.objects.new(name="Fill", object_data=fill_data)
+    bpy.context.collection.objects.link(fill)
+    fill.location = Vector((1.3, 0.2, 0.8))
+    look_at(fill, center)
+    if hasattr(fill_data, "use_shadow"):
+        fill_data.use_shadow = False
+    fill_data.energy = 450
+    fill_data.size = 1.0
+
+    rim_data = bpy.data.lights.new(name="RimTop", type='AREA')
+    rim = bpy.data.objects.new(name="RimTop", object_data=rim_data)
+    bpy.context.collection.objects.link(rim)
+
+    rim.location = Vector((-0.6, 0.9, 1.8))   # 后上方
+    look_at(rim, center)
+
+    rim_data.energy = 1200
+    rim_data.size = 2.0
+    if hasattr(rim_data, "use_shadow"):
+        rim_data.use_shadow = False
+
 
 def pick_imported_point_object(objs):
     for obj in reversed(objs):
@@ -413,8 +428,10 @@ mod.node_group = gn
 scene = bpy.context.scene
 scene.render.resolution_x = RENDER_RES[0]
 scene.render.resolution_y = RENDER_RES[1]
-#set_eevee_gpu(scene)
-scene.render.engine = 'CYCLES'
+if RENDER_ENGINE.upper() == "EEVEE":
+    set_eevee_gpu(scene)
+else:
+    scene.render.engine = "CYCLES"
 
 # [Eevee skip] scene.cycles.samples = CYCLES_SAMPLES
 # [Eevee skip] scene.cycles.use_denoising = False
